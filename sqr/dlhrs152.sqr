@@ -1,0 +1,543 @@
+!*****************************************************************************
+!*                                                                           *
+!*    1.  Program Name    : DLHRS152                                         *
+!*                                                                           *
+!*    2.  Program Desc.   : This program prints report which counts number   *
+!*                          of supervisors and non-supervisors and calculates*
+!*                          the supervisory ratio for a sub-agency or        *
+!*                          department.                                      *
+!*                                                                           *
+!*    3.  Author          : Manish Gupta                                     *
+!*                                                                           *
+!*    4.  Date Written    : 10/20/1998                                       *
+!*                                                                           *
+!*    5.  Files Used                                                         *
+!*           5.1  I/P     : None                                             *
+!*           5.2  O/P     : None                                             *
+!*           5.3  I/O     : None                                             *
+!*           5.4  Reports : DLHRS152  : Report of Employment of Supervisors  *
+!*                                      & Supervisory Ratio.                 *
+!*                                                                           *
+!*    6.  Tables Used                                                        *
+!*           6.1  I/P     : ps_dl_run_cntl_pp                                *
+!*                          ps_gvt_subagcy_tbl                               *
+!*                          ps_dept_tbl                                      *
+!*                          ps_gvt_employment                                *
+!*                          ps_gvt_job                                       *
+!*                          ps_jobcode_tbl                                   *
+!*           6.2  O/P     : None                                             *
+!*           6.3  I/O     : None                                             *
+!*                                                                           *
+!*    7.  SQC's Used      : setenv.sqc                                       *
+!*                          setup02.sqc                                      *
+!*                          curdttim.sqc                                     *
+!*                          datetime.sqc                                     *
+!*                          number.sqc                                       *
+!*                          stdapi.sqc                                       *
+!*                          dlper001.sqc                                     *
+!*                                                                           *
+!*    8.  Return Code                                                        *
+!*           8.1  Success : 0                                                *
+!*           8.1  Error   : None                                             *
+!*                                                                           *
+!*****************************************************************************
+!*                         MODIFICATION LOG                                  *
+!*                         ----------------                                  *
+!*                                                                           *
+!* Date     INI  CR #       Description                                      *
+!* ----     ---  ----       -----------                                      *
+!* 10/20/98 MLG  R-15       - New program.                                   *
+!*****************************************************************************
+#Include 'setenv.sqc'         !Set environment
+#include 'dlper001.sqc'       !Get-org-hierarchy procedure
+#include 'setup02.sqc'        !for printer
+
+#define dlhrs152-title        'REPORT OF EMPLOYMENT OF SUPERVISORS & SUPERVISORY RATIOS'
+#define end-of-report         ' **** END OF REPORT ****'
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-heading                                                           *
+!*       - Defines heading for report DLHRS108.                              *
+!*                                                                           *
+!*****************************************************************************
+begin-heading 10
+
+    move 'DLHRS152'                         to $ReportId
+    move {dlhrs152-title}                   to $ReportTitle
+
+    #Include 'dlhdg01.sqc'
+
+    if $sub_agency_flag = 'Y'
+        print 'SUB-AGENCY : '                    (+2,1)
+        print $hdg_sub_agency                    (0,+1,30)
+    else
+        print 'DEPARTMENT : '                    (+2,1)
+        print $hdg_deptid                        (0,+1,10)
+        print $hdg_dept_descr                    (0,+4,40)
+    end-if
+
+    print 'ASOFDATE   : '                        (+1,1)
+    print $asofdate                              (0,+1)
+
+    print 'DEPARTMENT ID'                        (+2,1)
+    print 'DEPARTMENT DESCRIPTION'               (0,+2)
+    print 'NO. OF EMPLOYEES'                     (0,+20)
+    print 'NO. OF SUPERVISORS'                   (0,+2)
+    print 'NO. OF NON SUPERVISORS'               (0,+2)
+    print 'SUPERVISORY RATIO'                    (0,+2)
+    print '-------------'                        (+1,1)
+    print '----------------------'               (0,+2)
+    print '----------------'                     (0,+20)
+    print '------------------'                   (0,+2)
+    print '----------------------'               (0,+2)
+    print '-----------------'                    (0,+2)
+
+end-heading
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-report                                                            *
+!*       - Calls routines to initialize variables and open files.            *
+!*       - Calls routine which processes the report.                         *
+!*       - Calls routine which terminates the report.                        *
+!*                                                                           *
+!*****************************************************************************
+begin-report
+
+    do Init-Report
+    do Process-Report
+    do Terminate-report
+
+end-report
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Init-Report                                                             *
+!*       - Calls routine which initializes date and time.                    *
+!*       - Calls routine which initializes standard application programming  *
+!*         interface with peoplesoft process scheduler.                      *
+!*       - Calls routine which intializes number routines.                   *
+!*       - Calls routine which gets current date and time.                   *
+!*       - Calls routine which gets asofdate.                                *
+!*       - Calls routine which extracts run control parameters.              *
+!*       - Calls routine which formats the where caluse.                     *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Init-Report
+
+    move 'N'                                to $sub_agency_flag
+
+    do Init-DateTime
+    do Stdapi-Init
+    do Init-Number
+    do get-current-datetime
+
+    if $prcs_process_instance = ''
+        input $input_gvt_sub_agency    'Enter sub agency     '
+        input $input_deptid            'Enter department Id. '
+        input $asofdate                'Enter As Of Date     '
+    else
+        do get-run-cntl-parameters
+    end-if
+
+    if isnull($asofdate) or
+       $asofdate = ' '
+        move $asoftoday                     to $asofdate
+    end-if
+
+    if $input_gvt_sub_agency != ' '       and
+       not isnull($input_gvt_sub_agency)
+        move 'Y'                            to $sub_agency_flag
+    end-if
+
+    if $sub_agency_flag = 'Y'
+        do get-sub-agency-descr($input_gvt_sub_agency,
+                                $hdg_sub_agency)
+    else
+        do get-dept-descr($input_deptid,
+                          $hdg_dept_descr)
+        move $input_deptid                  to $hdg_deptid
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-run-cntl-parameters                                                 *
+!*       - Extracts run control parameters which are passed from the online  *
+!*         screen.                                                           *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-run-cntl-parameters
+
+begin-select
+runcntl.gvt_sub_agency            &b_gvt_sub_agency
+runcntl.deptid                    &b_deptid
+runcntl.asofdate                  &asofdate
+
+    move &b_gvt_sub_agency                  to $input_gvt_sub_agency
+    move &b_deptid                          to $input_deptid
+    move &asofdate                          to $asofdate
+
+from ps_dl_run_cntl_sr     runcntl
+where runcntl.oprid          = $prcs_oprid
+  and runcntl.run_cntl_id    = $prcs_run_cntl_id
+end-select
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-sub-agency-descr                                                    *
+!*       - Gets description of the subagency.                                *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-sub-agency-descr($in_sub_agency,
+                                     :$out_sub_agency_descr)
+
+begin-select
+a.descr                      &descr
+    move &descr                             to $out_sub_agency_descr
+from ps_gvt_subagcy_tbl  a
+where a.company        = 'DL'
+  and a.gvt_sub_agency = $in_sub_agency
+  and a.eff_status     = 'A'
+  and a.effdt          = (select max(b.effdt)
+                          from ps_gvt_subagcy_tbl  b
+                          where b.company         = a.company
+                            and b.gvt_sub_agency  = a.gvt_sub_agency
+                            and b.eff_status      = a.eff_status
+                            and b.effdt          <= $_asofdate)
+end-select
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-dept-descr                                                          *
+!*       - Gets description of department.                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-dept-descr($in_deptid,
+                               :$out_dept_descr)
+
+begin-select
+a.gvt_descr40                &descr
+    move &descr                             to $out_dept_descr
+from ps_dept_tbl  a
+where a.deptid       = $in_deptid
+  and a.eff_status   = 'A'
+  and a.effdt        = (select max(b.effdt)
+                        from ps_dept_tbl   b
+                        where b.deptid    = a.deptid
+                        and b.eff_status  = a.eff_status
+                        and b.effdt      <= $_asofdate)
+end-select
+
+end-procedure
+
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Process-Report                                                          *
+!*       - Main procedure for processing report. Calls routine based upon    *
+!*         the input.                                                        *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Process-Report
+
+    move 0                                  to #total_employee_count
+    move 0                                  to #total_supervisor_count
+
+    if $sub_agency_flag = 'Y'
+        do process-report-using-sub-agency
+    else
+        do process-report-using-deptid
+    end-if
+
+    do print-total(#total_employee_count,
+                   #total_supervisor_count)
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Process-report-using-sub-agency                                         *
+!*       - Prints report if input is sub agency.                             *
+!*       - Calls routine which extracts employee count for each department   *
+!*         in the sub agency.                                                *
+!*       - Calls routine which extracts supervisor count for each department *
+!*         in the sub agency.                                                *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure process-report-using-sub-agency
+
+begin-select
+a.deptid                     &a_deptid
+a.descr                      &a_descr
+
+    move 0                                  to #employee_count
+    move 0                                  to #supervisor_count
+
+    do get-employee-count(&a_deptid,#employee_count)
+    do get-supervisor-count(&a_deptid,#supervisor_count)
+
+    add #employee_count                     to #total_employee_count
+    add #supervisor_count                   to #total_supervisor_count
+
+    do print-report(&a_deptid,
+                    &a_descr,
+                    #employee_count,
+                    #supervisor_count)
+
+from ps_dept_tbl  a
+where a.gvt_sub_agency    = $input_gvt_sub_agency
+  and a.eff_status        = 'A'
+  and a.effdt             = (select max(b.effdt)
+                             from ps_dept_tbl  b
+                             where b.deptid         = a.deptid
+                               and b.gvt_sub_agency = a.gvt_sub_agency
+                               and b.eff_status     = a.eff_status
+                               and b.effdt         <= $asofdate)
+order by a.deptid
+end-select
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Process-report-using-deptid                                             *
+!*       - Calls routine which returns all the departments reporting to the  *
+!*         input department.                                                 *
+!*       - Calls routine which returns total number of employees present in  *
+!*         each department.                                                  *
+!*       - Calls rotutine which returns total number of supervisors in each  *
+!*         department.                                                       *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure process-report-using-deptid
+
+    move 0                                  to #org_tree_size
+
+    do get-org-hierarchy($input_deptid,
+                         #org_tree_size)
+
+    move 1                                  to #array_count
+
+    while #array_count <= #org_tree_size
+        get $process_deptid                 from org_tree(#array_count)
+                                                 org_tree_deptid
+
+        do get-dept-descr($process_deptid,
+                          $process_dept_descr)
+
+        move 0                              to #employee_count
+        move 0                              to #supervisor_count
+
+        do get-employee-count($process_deptid,#employee_count)
+        do get-supervisor-count($process_deptid,#supervisor_count)
+
+        add #employee_count                 to #total_employee_count
+        add #supervisor_count               to #total_supervisor_count
+
+        do print-report($process_deptid,
+                        $process_dept_descr,
+                        #employee_count,
+                        #supervisor_count)
+
+        add +1                              to #array_count
+    end-while
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-employee-count                                                      *
+!*       - Returns total number of employees present in the input department.*
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-employee-count($in_deptid,
+                                   :#out_employee_count)
+
+begin-select
+count(*)                     &employee_count
+
+    move &employee_count                    to #out_employee_count
+
+from ps_gvt_employment  a,
+     ps_gvt_job         b
+where a.emplid       = b.emplid
+  and b.deptid       = $in_deptid
+  and (a.gvt_tenure  in ('1','2','3')
+   or  (a.gvt_tenure = '0'
+  and   b.GVT_PAY_PLAN  = 'ES'))
+  and a.effdt        = (select max(c.effdt)
+                        from ps_gvt_employment  c
+                        where c.emplid      = a.emplid
+                          and c.empl_rcd#   = a.empl_rcd#
+                          and c.effdt      <= $_asofdate)
+  and a.effseq       = (select max(d.effseq)
+                        from ps_gvt_employment  d
+                        where d.emplid   = a.emplid
+                          and d.empl_rcd#   = a.empl_rcd#
+                          and d.effdt    = a.effdt)
+  and b.effdt        = (select max(e.effdt)
+                        from ps_gvt_job  e
+                        where e.emplid      = b.emplid
+                          and e.empl_rcd#   = b.empl_rcd#
+                          and e.effdt      <= $_asofdate)
+  and b.effseq       = (select max(f.effseq)
+                        from ps_gvt_job  f
+                        where f.emplid      = b.emplid
+                          and f.empl_rcd#   = b.empl_rcd#
+                          and f.effdt       = b.effdt)
+end-select
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-supervisor-count                                                    *
+!*       - Returns total number of supervisors in the input department.      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-supervisor-count($in_deptid,
+                                     :#out_employee_count)
+
+begin-select
+count(*)                     &employee_count
+
+    move &employee_count                    to #out_employee_count
+
+from ps_gvt_employment  a,
+     ps_gvt_job         b,
+     ps_jobcode_tbl     g
+where a.emplid         = b.emplid
+  and b.jobcode        = g.jobcode
+  and b.deptid         = $in_deptid
+  and (a.gvt_tenure    in ('1','2','3')
+   or  (a.gvt_tenure = '0'
+  and   b.GVT_PAY_PLAN  = 'ES'))
+  and g.manager_level  in ('1','2','3')
+  and g.eff_status     = 'A'
+  and a.effdt          = (select max(c.effdt)
+                          from ps_gvt_employment  c
+                          where c.emplid      = a.emplid
+                            and c.empl_rcd#   = a.empl_rcd#
+                            and c.effdt      <= $_asofdate)
+  and a.effseq         = (select max(d.effseq)
+                          from ps_gvt_employment  d
+                          where d.emplid     = a.emplid
+                            and d.empl_rcd#  = a.empl_rcd#
+                            and d.effdt      = a.effdt)
+  and b.effdt          = (select max(e.effdt)
+                          from ps_gvt_job  e
+                          where e.emplid      = b.emplid
+                            and e.empl_rcd#   = b.empl_rcd#
+                            and e.effdt      <= $_asofdate)
+  and b.effseq         = (select max(f.effseq)
+                          from ps_gvt_job  f
+                          where f.emplid      = b.emplid
+                            and f.empl_rcd#   = b.empl_rcd#
+                            and f.effdt       = b.effdt)
+  and g.effdt          = (select max(h.effdt)
+                          from ps_jobcode_tbl  h
+                          where h.jobcode     = g.jobcode
+                            and h.eff_status  = g.eff_status
+                            and h.effdt      <= $_asofdate)
+
+end-select
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   print-report                                                            *
+!*       - Prints detail line of the report.                                 *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure print-report($print_deptid,
+                             $print_descr,
+                             #print_employee_count,
+                             #print_supervisor_count)
+
+    let #print_non_supervisor_count  =
+               #print_employee_count - #print_supervisor_count
+
+    if #print_supervisor_count = 0
+        move 0                              to #print_supervisory_ratio
+    else
+        let #print_supervisory_ratio = #print_non_supervisor_count /
+                                       #print_supervisor_count
+    end-if
+
+    print $print_deptid               (+1,1,10)
+    print $print_descr                (0,+5,40)
+    print #print_employee_count       (0,+11)     edit 9999999
+    print #print_supervisor_count     (0,+14)     edit 999999
+    print #print_non_supervisor_count (0,+18)     edit 999999
+    print #print_supervisory_ratio    (0,+12)     edit 9999.99
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   print-total                                                             *
+!*       - Prints total.                                                     *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure print-total(#print_employee_count,
+                            #print_supervisor_count)
+
+    let #print_non_supervisor_count  =
+               #print_employee_count - #print_supervisor_count
+
+    if #print_supervisor_count = 0
+        move 0                              to #print_supervisory_ratio
+    else
+        let #print_supervisory_ratio = #print_non_supervisor_count /
+                                       #print_supervisor_count
+    end-if
+
+    print 'Total :'                   (+2,1)
+    print #print_employee_count       (0,+49)     edit 9999999
+    print #print_supervisor_count     (0,+14)     edit 999999
+    print #print_non_supervisor_count (0,+18)     edit 999999
+    print #print_supervisory_ratio    (0,+12)     edit 9999.99
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Terminate-Report                                                        *
+!*       - Calls routines which notifies process scheduler of termination    *
+!*         of the program.                                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Terminate-Report
+
+    print {end-of-report}         (+2,0)  center
+
+    do commit-transaction
+    do stdapi-term
+
+end-procedure
+
+#Include 'curdttim.sqc'  !Get-Current-DateTime procedure
+#Include 'datetime.sqc'  !Routines for date and time formatting
+#Include 'number.sqc'    !Routines to format numbers
+#Include 'stdapi.sqc'    !Update Process API

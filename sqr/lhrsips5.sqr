@@ -1,0 +1,3699 @@
+!*****************************************************************************
+!*                                                                           *
+!*    1.  Program Name    : LHRSIPS5                                         *
+!*                                                                           *
+!*    2.  Program Desc.   : This program reads data from Peoplesoft file and *
+!*                          IPS file and compares data for each employee and *
+!*                          produces reconciliation reports.                 *
+!*                                                                           *
+!*    3.  Author          : Manish Gupta                                     *
+!*                                                                           *
+!*    4.  Date Written    : 09/18/1998                                       *
+!*                                                                           *
+!*    5.  Files Used                                                         *
+!*           5.1  I/P     : PS file    : Contains Peoplesoft employee data   *
+!*                                       filename - lhrsips5_ps.dat          *
+!*                          IPS file   : Contains IPS employee data          *
+!*                                       filename - lhrsips5_ips.dat         *
+!*                                       NNNN - Process Instance             *
+!*           5.2  O/P     : PS file    : Contains Peoplesoft employee data   *
+!*                                       filename - lhrsips5_ps_NNNN.dat     *
+!*                          IPS file   : Sorted IPS file.                    *
+!*                                       filename - lhrsips5_ips_NNNN.dat    *
+!*                                       NNNN - Process Instance             *
+!*           5.3  I/O     : None                                             *
+!*           5.4  Reports : LHRSIPS5-A : Peoplesoft-IPS reconciliation report*
+!*                                       of discrepancies by name for payroll*
+!*                                       interface data elements.            *
+!*                                       Filename for this report is having  *
+!*                                       format of :                         *
+!*                                           /MMMM/lhrsips5a_NNNN.lis - UNIX *
+!*                                           lhrsips5a_MMMM_NNNN.lis  - WIN  *
+!*                                       where MMMM is POI.                  *
+!*                                             NNNN is process instance      *
+!*                          LHRSIPS5-B : Reconciliation - IPS/Peoplesoft     *
+!*                                       compare.                            *
+!*                                       Filename for this report is having  *
+!*                                       format of :                         *
+!*                                           /MMMM/lhrsips5b_NNNN.lis - UNIX *
+!*                                           lhrsips5b_MMMM_NNNN.lis  - WIN  *
+!*                                       where MMMM is POI.                  *
+!*                                             NNNN is process instance      *
+!*                                                                           *
+!*    6.  Tables Used                                                        *
+!*           6.1  I/P     : None                                             *
+!*           6.2  O/P     : None                                             *
+!*           6.3  I/O     : PS_DL_RECONCIL_TBL                               *
+!*                                                                           *
+!*    7.  SQC's Used      : setenv.sqc                                       *
+!*                          curdttim.sqc                                     *
+!*                          datetime.sqc                                     *
+!*                          number.sqc                                       *
+!*                          stdapi.sqc                                       *
+!*                                                                           *
+!*    8.  Return Code                                                        *
+!*           8.1  Success : 0                                                *
+!*           8.2  Error   : 1000 : Error while sorting PS/IPS file.          *
+!*                          1100 : IPS file open error.                      *
+!*                          1200 : PS file open error.                       *
+!*                          1300 : Error while printing report.              *
+!*                          1400 : Error while receiving file from IPS.      *
+!*                                                                           *
+!*****************************************************************************
+!*                         MODIFICATION LOG                                  *
+!*                         ----------------                                  *
+!*                                                                           *
+!* Date     INI  CR #       Description                                      *
+!* ----     ---  ----       -----------                                      *
+!* 09/18/98 MLG  I-16       - New program.                                   *
+!* 01/27/00 John Williford  - All changes identified below were done to      *
+!*                            support the PS 7.56 upgrade                    *
+!                           1.Replaced all code pertaining to ERN_PROGRAM    *
+!                             with GVT_PAY_PLAN on the PS_GVT_JOB table      *
+!                           2.Replaced all code pertaining to                *
+!                             GVT_RTND_ERN_PRGM with GVT_RTND_PAY_PLAN on the*
+!                             PS_GVT_JOB table                               *
+!                           3.Commented out selection of SSN on table        *
+!                             DL_RECONCIL_TBL and replaced with selection    *
+!                             of National_ID                                 *
+!                           4.All changes are commented with JMW 2/2/2000    *
+! 3/07/2000 John Williford  1. Comment out receive file for YTST             *
+!                           2. changed salary_cap to 130,200.                *
+!                           3. added SHOW statements for debugging purposes  *
+!                           4. all changes are commented with JMW 3/7/2000   *
+! 4/26/2000 John Williford  1. changed procedure edit-hb so error won't occur*
+!                              when ps_benefit_plan = '000' and ips_fehb_code*
+!                              = '990' or '998' or '999'. In past, this      *
+!                              record was written to lhrsips5-B error report.*
+! 6/15/2000 Glenn Daniels   1. Added Accounting Code to the data elements    *
+!                              being compared, expanded file to 356          *
+! 8/2/2000  Glenn Daniels   1. Added 'As of Date' to the heading             *
+!                           2. Added sort for PS input file                  *
+!                           3. Added Inputs for variables when this program  *
+!                              is executed outside PS process scheduler      *
+!                           4. Add 'A' to the list of possible PeopleSoft    *
+!                              annuitant codes to consider                   *
+! 9/14/00  Glenn Daniels    1. Increase #prcs_process_instance variable edit *
+!                              from five characters to eight characters      *
+!11/21/00  Glenn Daniels    1. Changed the parameter of the OPEN to :VARY    *
+!                              to allow for varying record lengths in the IPS*
+!                              input file due to missing accounting codes    *
+! 09/18/01 JNA  PPR361         Remove TSP investment distributions,          *
+!                              modifying Locality Indicator, pull salary cap *
+!                              from config table, add code to only download  *
+!                              and sort data files when running in production*
+!                              else expect files to be sorted and located in *
+!                              the correct input directory.                  *
+!*****************************************************************************
+#Include 'setenv.sqc'         !Set environment
+#include 'setup02.sqc'        !printer
+#include 'dlfpath.sqc'        !Common path definition for reports and files.
+#include 'dloprid.sqc'        !For multiple reports
+
+#define lhrsips5-a-title1     'PEOPLESOFT-IPS RECONCILIATION REPORT OF DISCREPANCIES BY NAME'
+#define lhrsips5-a-title2     'FOR PAYROLL INTERFACE DATA ELEMENTS'
+#define lhrsips5-b-title      'RECONCILIATION - LIST OF UNMATCHED RECORDS'
+#define no-data-to-print      '***** NO DATA TO PRINT  *****'
+#define error-message         'ERROR : SEE SQR.LOG FOR DETAIL'
+
+#define ips_filename          'lhrsips5_ips'
+#define ips_filename_srtd     'lhrsips5_ips_'
+#define ps_filename           'lhrsips5_ps'
+#define ps_filename_srtd      'lhrsips5_ps_'
+#define report_filename_a     'lhrsips5a_'
+#define report_filename_b     'lhrsips5b_'
+#define report_filename_ext   '.pdf'
+#define data_filename_ext     '.dat'
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-setup                                                             *
+!*       - Drops table PS_DL_RECONCIL_TBL and recreates it.                  *
+!*       - Declares printer.                                                 *
+!*       - Declares report layout.                                           *
+!*       - Declares reports lhrsips5-A and lhrsips5-B.                       *
+!*                                                                           *
+!*****************************************************************************
+begin-setup
+
+begin-sql on-error=skip
+     truncate table ps_dl_reconcil_tbl
+end-sql
+
+end-setup
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-heading                                                           *
+!*       - Defines heading for lhrsips5-A and lhrsips5-B.                    *
+!*                                                                           *
+!*****************************************************************************
+begin-heading 9
+!  SHOW 'Began begin-heading Procedure'                    ! JMW 3/7/2000 added
+
+if $report_name = 'lhrsips5-A'
+    move 'lhrsips5-A'                       to $ReportId
+    move {lhrsips5-a-title1}                to $ReportTitle
+    #Include 'dlhdg01.sqc'
+
+    print {lhrsips5-a-title2}                    (-1)     center
+    print 'PERSONNEL OFFICE IDENTIFIER (POI) : ' (+3,1)
+    print $poi_a                                 (0,+1)
+    print $poi_a_descr                           (0,+3)
+
+    print 'As of: '                              (+1,1)
+    print $asofdate                              (0,+2)
+
+    print 'NAME'                                 (+2,1)
+    print 'SSN'                                  (0,+23)
+    print 'DATA ITEM'                            (0,+8)
+    print 'PEOPLESOFT DATA'                      (0,+18)
+    print '.'                                    (0,+12)
+    print 'IPS DATA'                             (0,+2)
+    print '----'                                 (+1,1)
+    print '---'                                  (0,+23)
+    print '---------'                            (0,+8)
+    print '---------------'                      (0,+18)
+    print '.'                                    (0,+12)
+    print '--------'                             (0,+2)
+else
+    move 'lhrsips5-B'                       to $ReportId
+    move {lhrsips5-b-title}                 to $ReportTitle
+    #Include 'dlhdg01.sqc'
+
+    print 'PERSONNEL OFFICE IDENTIFIER (POI) : ' (+2,1)
+    print $poi_b                                 (0,+1)
+    print $poi_b_descr                           (0,+3)
+
+    print 'As of: '                              (+1,1)
+    print $asofdate                              (0,+2)
+
+    print 'ORGANIZATION CODE'                    (+2,1)
+    print 'SSN'                                  (0,+2)
+    print 'NAME'                                 (0,+8)
+    print '-----------------'                    (+1,1)
+    print '---'                                  (0,+2)
+    print '----'                                 (0,+8)
+end-if
+
+!  SHOW 'Ending begin-heading Procedure'                   ! JMW 3/7/2000 added
+end-heading
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-footing                                                           *
+!*       - Defines report footer for both the reports.                       *
+!*                                                                           *
+!*****************************************************************************
+begin-footing 1
+!  SHOW 'Began begin-footing Procedure'                    ! JMW 3/7/2000 added
+
+    print 'PERSONAL DATA - PRIVACY ACT OF 1974'  ()       center
+
+!  SHOW 'Ending begin-footing Procedure'                   ! JMW 3/7/2000 added
+end-footing
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-report                                                            *
+!*       - Calls routines to initialize variables and open files.            *
+!*       - Calls routine which processes the report.                         *
+!*       - Calls routine which terminates the report.                        *
+!*                                                                           *
+!*****************************************************************************
+begin-report
+  SHOW 'Began begin-report Procedure'                    ! JMW 3/7/2000 added
+
+    do Init-Report
+
+    if $prcs_process_instance = ''
+       ! input $prcs_oprid              'Enter Oprid         '
+       ! input $prcs_run_cntl_id        'Enter Run Control ID'
+        input $asofdate                'Enter As of Date    '
+    else
+        do get-run-cntl-parameters
+    end-if
+
+    do get-salary-cap                      !j 09/18/01 JNA  PPR361
+
+begin-select                               !j 09/18/01 JNA  PPR361
+o.name                                     !j 09/18/01 JNA  PPR361
+     let $database = &o.name               !j 09/18/01 JNA  PPR361
+from v$database o                          !j 09/18/01 JNA  PPR361
+end-select                                 !j 09/18/01 JNA  PPR361
+
+  if $database = 'HRMS2'                                                   !j 09/18/01 JNA  PPR361
+    show 'Running in Production so will now download IPS file.'            !j 09/18/01 JNA  PPR361
+    do receive-ips-file                    ! JMW 3/7/2000 comment out for testing      !4/21
+  else                                                                     !j 09/18/01 JNA  PPR361
+    show 'Not running in Production so will not download IPS file.'        !j 09/18/01 JNA  PPR361
+    show 'Data should already be located in ' {infile_path} '.'            !j 09/18/01 JNA  PPR361
+    show 'Running in ' $database '.'                                       !j 09/18/01 JNA  PPR361
+  end-if                                                                   !j 09/18/01 JNA  PPR361
+    do sort-ips-file                       ! JMW 3/7/2000 comment out for testing
+    do sort-ps-file                        ! JMW 3/7/2000 comment out for testing
+    if $system_error = 'N'
+        do open-files
+        if $system_error = 'N'
+            do Process-Report
+        end-if
+    end-if
+
+    do Terminate-report
+
+!  SHOW 'Ending begin-report Procedure'                   ! JMW 3/7/2000 added
+end-report
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Init-Report                                                             *
+!*       - Calls routine which initializes date and time.                    *
+!*       - Calls routine which intializes number routines.                   *
+!*       - Calls routine which gets current date and time.                   *
+!*       - Calls routine which opens files.                                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Init-Report
+  SHOW 'Began Init-report Procedure'                       ! JMW 3/7/2000 added
+
+    move 'N'                                to $system_error
+    move ' '                                to $old_report_file
+
+    let #records_read_ps        = 0
+    let #records_read_ips       = 0
+    let #records_in_ps_missing  = 0
+    let #records_in_ips_missing = 0
+    let #records_with_error     = 0
+    let #records_with_no_error  = 0
+!   let #salary_cap             = 125900.00   !JMW 3/7/2000 comment out
+!j    let #salary_cap             = 130200.00   !JMW 3/7/2000 added  !j 09/18/01 JNA  PPR361
+
+    do Init-DateTime
+    do Stdapi-Init
+    do Init-Number
+    do get-current-datetime
+
+    let $proc_instance          = edit(#prcs_process_instance,'09999999')
+    let $infile_ips             = {infile_path}      || {ips_filename}
+                                                     || {data_filename_ext}
+    let $infile_ps              = {infile_path}      || {ps_filename}
+                                                     || {data_filename_ext}
+    let $outfile_ips            = {outfile_path}     || {ips_filename_srtd}
+                                                     || substr($proc_instance,1,8)
+                                                     || {data_filename_ext}
+    let $outfile_ps             = {outfile_path}     || {ps_filename_srtd}
+                                                     || substr($proc_instance,1,8)
+                                                     || {data_filename_ext}
+    let $report_a_all           = {report_path}      || {report_filename_a}
+                                                     || substr($proc_instance,1,8)
+                                                     || {report_filename_ext}
+    let $report_b_all           = {report_path}      || {report_filename_b}
+                                                     || substr($proc_instance,1,8)
+                                                     || {report_filename_ext}
+
+    SHOW 'infile_ips   = '  $infile_ips              ! JMW 3/7/2000
+    SHOW 'infile_ps    = '  $infile_ps               ! JMW 3/7/2000
+    SHOW 'outfile_ips  = '  $outfile_ips             ! JMW 3/7/2000
+    SHOW 'outfile_ps   = '  $outfile_ps              ! JMW 3/7/2000
+    SHOW 'report_a_all = '  $report_a_all            ! JMW 3/7/2000
+    SHOW 'report_b_all = '  $report_b_all            ! JMW 3/7/2000
+
+    do get-opr-info
+
+  SHOW 'Ending Init-report Procedure'                     ! JMW 3/7/2000 added
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-run-cntl-parameters                                                 *
+!*       - Extracts run control parameters from run control parameters       *
+!*         table.                                                            *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-run-cntl-parameters
+
+    !show 'just started get-run-cntl-parameters procedure'               !JMW 3/28/2000
+
+begin-select
+runcntl.asofdate            &b_asofdate
+
+    move &b_asofdate                        to $asofdate
+
+from ps_dl_hrsips5      runcntl
+where runcntl.oprid          = $prcs_oprid
+  and runcntl.run_cntl_id    = $prcs_run_cntl_id
+end-select
+
+    !show 'just ending get-run-cntl-parameters procedure'               !JMW 3/28/2000
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   receive-ips-file                                                        *
+!*       - Receives IPS file from IPS system using ftp.                      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure receive-ips-file
+  SHOW 'Began receive-ips-file Procedure'                 ! JMW 3/7/2000 added
+
+    #ifdef UNIX
+        let $ps_home      = getenv('PS_HOME')
+        let $cntl_file    = $ps_home || '/bin/cntl/lhrsips5.cntl'
+       ! let $cntl_file = '/export/home/gdaniels/bin/cntl/lhrsips5.cntl'
+
+        SHOW 'ps_home   = ' $ps_home         ! JMW 3/7/2000
+        SHOW 'cntl_file = ' $cntl_file       ! JMW 3/7/2000
+
+        let $ftp_command  = 'ftp < ' || $cntl_file
+
+        call system using $ftp_command #os_status
+
+        if #os_status != 0
+            display '***************************************************'
+            display '* Error while receiving file from IPS system.     *'
+            display   $cntl_file                                              ! JMW 3/7/2000
+            display '* Terminating program with return code of 1400.   *'
+            display '* Contact Systems Engineer on call to resolve the *'
+            display '* issue.     receive-ips-file Procedure           *'
+            display '***************************************************'
+
+            move 'Y'                        to $system_error
+            move 1400                       to #prcs_rc
+            move 1400                       to #prcs_message_nbr
+            move {error-message}            to $prcs_message_parm1
+            move #prcs_run_status_error     to #prcs_run_status
+        end-if
+    #endif
+
+  SHOW 'Ending receive-ips-file Procedure'                ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   sort-ips-file                                                           *
+!*       - Sort IPS file on POI and SSN in ascending order.                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure sort-ips-file
+   SHOW 'Began sort-ips-file Procedure'                    ! JMW 3/7/2000 added
+   SHOW 'sorting infile_ips called -->' $infile_ips        ! JMW 3/7/2000 added
+
+    #ifdef UNIX
+        let $sort_command = 'awk ' || ''''
+                                   || '{'
+                                   || 'print substr($0,149,4) $0'
+                                   || '}'
+                                   || ''' '
+                                   || $infile_ips
+                                   || ' | sort | cut -b5-356 > '
+                                   || $outfile_ips
+
+        call system using $sort_command #os_status
+    #endif
+
+    #ifdef NT
+        let $sort_command = 'command.com /c copy ' || $infile_ips
+                                                   || ' '
+                                                   || $outfile_ips
+
+        SHOW 'infile_ips sorted and copied to outfile_ips--> '  $outfile_ips
+        call system using $sort_command #os_status
+    #endif
+
+    if #os_status != 0
+        display '***************************************************'
+        display '* Error while sorting input IPS file.             *'
+        display   $infile_ips                                            !JMW 3/7/2000
+        display '* Terminating program with return code of 1000.   *'
+        display '* Contact Systems Engineer on call to resolve the *'
+        display '* issue.      sort-ips-file Procedure             *'
+        display '***************************************************'
+
+        move 'Y'                            to $system_error
+        move 1000                           to #prcs_rc
+        move 1000                           to #prcs_message_nbr
+        move {error-message}                to $prcs_message_parm1
+        move #prcs_run_status_error         to #prcs_run_status
+    end-if
+
+   SHOW 'Ending sort-ips-file Procedure'                  ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   sort-ps-file                                                            *
+!*       - Sort PS file on POI and SSN in ascending order.                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure sort-ps-file
+  SHOW 'Began sort-ps-file Procedure'                     ! JMW 3/7/2000 added
+  SHOW 'sorting infile_ps called -->' $infile_ps          ! JMW 3/7/2000 added
+
+    #ifdef UNIX
+         let $sort_command = 'awk ' || ''''
+                                    || '{'
+                                    || 'print substr($0,138,4) $0'
+                                    || '}'
+                                    || ''' '
+                                    || $infile_ps
+                                    || ' sort | cut -b5-362 > '
+                                    || $outfile_ps
+
+     !   let $sort_command = 'cp '  || $infile_ps
+     !                              || ' '
+     !                              || $outfile_ps
+
+        SHOW 'infile_ps sorted and copied to outfile_ps--> '  $outfile_ps
+        call system using $sort_command #os_status
+    #endif
+
+    #ifdef NT
+        let $sort_command = 'command.com /c copy ' || $infile_ps
+                                                   || ' '
+                                                   || $outfile_ps
+
+        call system using $sort_command #os_status
+    #endif
+
+    if #os_status != 0
+        display '***************************************************'
+        display '* Error while sorting input PS file.              *'
+        display   $infile_ps                                           !JMW 3/7/2000
+        display '* Terminating program with return code of 1000.   *'
+        display '* Contact Systems Engineer on call to resolve the *'
+        display '* issue.    sort-ps-file Procedure                *'
+        display '***************************************************'
+
+        move 'Y'                            to $system_error
+        move 1000                           to #prcs_rc
+        move 1000                           to #prcs_message_nbr
+        move {error-message}                to $prcs_message_parm1
+        move #prcs_run_status_error         to #prcs_run_status
+    end-if
+
+  SHOW 'Ending sort-ps-file Procedure'                    ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   open-files                                                              *
+!*       - Opens IPS and PS file in read mode.                               *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure open-files
+  SHOW 'Began open-files Procedure'                       ! JMW 3/7/2000 added
+
+    SHOW 'Getting ready to Open IPS File'                 ! JMW 3/7/2000 added
+    let $file_name  = $outfile_ips
+    open $file_name as 1 for-reading  record=352:vary !Changed to vary GMD 11/28/00
+        status=#ips_filestat
+    SHOW 'Opened IPS File --> '  $outfile_ips             ! JMW 3/7/2000 added
+
+    SHOW 'Getting ready to Open PS File'                  ! JMW 3/7/2000 added
+    let $file_name  = $outfile_ps
+    open $file_name as 2 for-reading  record=357:fixed
+        status=#ps_filestat
+    SHOW 'Opened PS File -- > '  $outfile_ps              ! JMW 3/7/2000 added
+
+    if #ips_filestat != 0
+        display '***************************************************'
+        display '* Error while opening IPS file.                   *'
+        display   $outfile_ips                                           !JMW 3/7/2000
+        display '* Terminating program with return code of 1100.   *'
+        display '* Contact Systems Engineer on call to resolve the *'
+        display '* issue.   begin-procedure open-files             *'
+        display '***************************************************'
+
+        move 'Y'                            to $system_error
+        move 1100                           to #prcs_rc
+        move 1100                           to #prcs_message_nbr
+        move {error-message}                to $prcs_message_parm1
+        move #prcs_run_status_error         to #prcs_run_status
+    end-if
+
+    if #ps_filestat != 0
+        display '***************************************************'
+        display '* Error while opening Peoplesoft file.            *'
+        display   $outfile_ps                                           !JMW 3/7/2000
+        display '* Terminating program with return code of 1200.   *'
+        display '* Contact Systems Engineer on call to resolve the *'
+        display '* issue.                                          *'
+        display '***************************************************'
+
+        move 'Y'                            to $system_error
+        move 1200                           to #prcs_rc
+        move 1200                           to #prcs_message_nbr
+        move {error-message}                to $prcs_message_parm1
+        move #prcs_run_status_error         to #prcs_run_status
+    end-if
+
+    move 'N'                                to $eof_ips_file
+    move 'N'                                to $eof_ps_file
+
+  SHOW 'Ending open-files Procedure'                      ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Process-Report                                                          *
+!*       - Reads IPS and PS file in loop, compares the keys of the read      *
+!*         record, if they match, it goes with data editing, otherwise       *
+!*         data is written to PS_DL_RECONCILE_TBL so that it can be printed  *
+!*         on lhrsips5-B as missing data on the system.                      *
+!*       - Calls routine which prints lhrsips5-B.                            *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Process-Report
+  SHOW 'Begin process-report Procedure'                   ! JMW 3/7/2000 added
+
+    move 'lhrsips5-A'                       to $report_name
+    move 'N'                                to $end_of_report
+    move ' '                                to $prev_poi
+    move 0                                  to #error_count
+    move 'Y'                                to $first_time_flag
+
+!    SHOW 'going to read-ips-file from within Procedure Process-Report'    !JMW 3/7/2000 added
+    do read-ips-file
+!    SHOW 'coming back from read-ips-file into Procedure Process-Report'   !JMW 3/7/2000 added
+    do read-ps-file
+
+    while $eof_ips_file = 'N' and
+          isnull($ips_submitting_ofc_code)
+          do read-ips-file
+          do read-ps-file
+    end-while
+
+    while $eof_ips_file = 'N'  and
+          $eof_ps_file = 'N'
+        if $ips_key < $ps_key
+            SHOW 'ips_key = ' $ips_key
+            SHOW 'ps_key  = ' $ps_key
+            SHOW 'ips_key < ps_key. GOING TO DO DATA-IN-PS-MISSING'       ! JMW 3/7/2000 added
+            do data-in-ps-missing
+            do read-ips-file
+        else
+            if $ips_key > $ps_key
+                SHOW 'ips_key = ' $ips_key
+                SHOW 'ps_key  = ' $ps_key
+                SHOW 'ips_key > ps_key. GOING TO DO DATA-IN-IPS-MISSING'   ! JMW 3/7/2000 added
+                do data-in-ips-missing
+                do read-ps-file
+                else
+                SHOW 'ips-key = ps_key. GOING TO DO EDIT_CHECK'            ! JMW 3/7/2000 added
+                do edit-check
+                do read-ips-file
+                do read-ps-file
+            end-if
+        end-if
+    end-while
+    while $eof_ips_file = 'N'
+        do data-in-ps-missing
+        do read-ips-file
+    end-while
+
+    while $eof_ps_file = 'N'
+        do data-in-ips-missing
+        do read-ps-file
+    end-while
+
+    if $first_time_flag = 'Y'
+        let $report_file = $report_a_all
+
+        new-report $report_file
+        print {no-data-to-print}        ()
+    else
+        do print-employee-error-count
+    end-if
+
+    move 'Y'                                to $end_of_report
+
+    print '*******  END OF REPORT  ******'  (+2)      center
+
+    let $dummy_file = {report_path} || 'temp'
+    new-report $dummy_file
+
+    #ifdef UNIX
+        if $first_time_flag != 'Y'
+            move $report_file               to $old_report_file
+            do print-all-report
+        end-if
+    #end-if
+
+    do print-report-lhrsips5-b
+
+  SHOW 'Ending process-report Procedure'                  ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   read-ips-file                                                           *
+!*       - Reads a record from IPS file and forms IPS key using IPS          *
+!*         submitting office code and IPS ssn.                               *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure read-ips-file
+!  SHOW 'Began read-ips-file Procedure'                    ! JMW 3/7/2000 added
+
+    read 1                                  into $ips_ssn:9
+                                                 $ips_empe_name:25
+                                                 $ips_effective_action_date:8
+                                                 $ips_opm_noa:3
+                                                 $ips_empe_name_title:1
+                                                 $ips_dob:8
+                                                 $ips_tenure_code:1
+                                                 $ips_govt_serv_date:8
+                                                 $ips_flsa_code:1
+                                                 $ips_empt_basis_code:1
+                                                 $ips_empe_status_code:1
+                                                 $ips_retirement_code:1
+                                                 $ips_grade_date:8
+                                                 $ips_last_increase_date:8
+                                                 $ips_accession_date:8
+                                                 $ips_special_empt_code:2
+                                                 $ips_occup_series:5
+                                                 $ips_classification_title:2
+                                                 $ips_position_occupied:1
+                                                 $ips_pay_plan:2
+                                                 $ips_pay_grade:2
+                                                 $ips_pay_step:2
+                                                 $ips_base_pay_annual_rate:6
+                                                 $ips_pay_basis_code:1
+                                                 $ips_fegli_code:2
+                                                 $ips_base_pay_special_rate_code:4
+                                                 $ips_part_time_tour_hrs:3
+                                                 $ips_leave_eligible_code:1
+                                                 $ips_auo_pct:5
+                                                 $ips_pers_org_code:10
+                                                 $ips_geographic_location:9
+                                                 $ips_submitting_ofc_code:4
+                                                 $ips_fehb_code:3
+                                                 $ips_fehb_empshr_ded_amt:7
+                                                 $ips_fehb_agyshr_ded_amt:7
+                                                 $ips_fehb_part_time_prorate:1
+                                                 $ips_annuitant_code:1
+                                                 $ips_annuity_amt:6
+                                                 $ips_retire_govt_service_date:8
+                                                 $ips_empt_limit_code:1
+                                                 $ips_retained_pay_plan:2
+                                                 $ips_retained_pay_grade:2
+                                                 $ips_retained_pay_step:2
+                                                 $ips_severance_pay_bal:7
+                                                 $ips_career_ladder_position:1
+                                                 $ips_educational_attainment:2
+                                                 $ips_minority_grp_code:1
+                                                 $ips_performance_rating:1
+                                                 $ips_supervisory_code:1
+                                                 $ips_veterans_preference:1
+                                                 $ips_patco_code:1
+                                                 $ips_tsp_dept_code:2
+                                                 $ips_tsp_agy_code:2
+                                                 $ips_tsp_status_code:1
+                                                 $ips_tsp_status_date:8
+                                                 $ips_tsp_vestment_period:1
+                                                 $ips_tsp_sep_code:1
+                                                 $ips_tsp_sep_date:8
+                                                 $ips_tsp_service_compute_date:8
+                                                 $ips_tsp_empe_rate:5
+                                                 $ips_tsp_empe_amt:4
+                                                 $ips_tsp_empl_dist_amt_g:5          !j 09/18/01 JNA  PPR361 no longer used
+                                                 $ips_tsp_empl_dist_amt_f:5          !j 09/18/01 JNA  PPR361 no longer used
+                                                 $ips_tsp_empl_dist_amt_c:5          !j 09/18/01 JNA  PPR361 no longer used
+                                                 $ips_ambassador_salary:8
+                                                 $ips_physicians_bonus:8
+                                                 $ips_total_salary:8
+                                                 $ips_ipa_salary:8
+                                                 $ips_staff_diff_amt:7
+                                                 $ips_auo_amt:7
+                                                 $ips_locality_pay_ind:1
+                                                 $ips_locality_pay_amt:7
+                                                 $ips_retention_allowance_amt:7       !j 09/18/01 JNA  PPR361 spelled incorrectly
+                                                 $ips_supervisory_diff_amt:7
+                                                 $ips_accounting_code:22
+
+    SHOW 'IPS file: ips_submitting_ofc_code --> ' $ips_submitting_ofc_code
+    SHOW 'IPS file: ips_ssn                 --> ' $ips_ssn
+
+    if #end-file = 1
+        move 'Y'                            to $eof_ips_file
+    else
+        string $ips_submitting_ofc_code $ips_ssn by '' into $ips_key
+        let #records_read_ips  = #records_read_ips + 1
+        SHOW 'records_read_ips ' #records_read_ips       ! JMW 3/7/2000 added
+    end-if
+
+!  SHOW 'Ending read-ips-file Procedure'                  ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   read-ps-file                                                            *
+!*       - Reads a record from PS file and forms PS key using POI and SSN.   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure read-ps-file
+!  SHOW 'Began read-ps-file Procedure'                     ! JMW 3/7/2000 added
+
+    read 2                                  into $ps_ssn:9
+                                                 $ps_name:25
+                                                 $ps_sex:1
+                                                 $ps_birthdate:8
+                                                 $ps_gvt_tenure:1
+                                                 $ps_service_dt:8
+                                                 $ps_dl_snap_flsa:1
+                                                 $ps_empl_basis:1
+                                                 $ps_empl_status:1
+                                                 $ps_gvt_retire_plan:1
+                                                 $ps_grade_entry_dt:8
+                                                 $ps_gvt_dt_lei:8
+                                                 $ps_hire_dt:8
+                                                 $ps_dl_special_emp_cd:2
+                                                 $ps_gvt_occ_series:5
+                                                 $ps_gvt_posn_title_cd:2
+                                                 $ps_gvt_posn_occupied:1
+!                                                $ps_ern_program:2     JMW 2/2/2000 deleted
+                                                 $ps_gvt_pay_plan:2   !JMW 2/2/2000 added
+                                                 $ps_grade:2
+                                                 $ps_step:2
+                                                 $ps_total_salary:8
+                                                 $ps_empl_type:1
+                                                 $ps_gvt_pay_basis:1
+                                                 $ps_gvt_fegli:2
+                                                 $ps_std_hours:3
+                                                 $ps_dl_leave_elig_cd:1
+                                                 $ps_auo_pct:5
+                                                 $ps_orgcode:10
+                                                 $ps_gvt_geoloc_cd:9
+                                                 $ps_gvt_poi:4
+!                                                $ps_benefit_plan:3          !JMW 3/17/2000 out
+                                                 $ps_benefit_plan:2          !JMW 3/17/2000 added
+                                                 $ps_covrg_cd:1
+                                                 $ps_empl_covrg_rate:12
+                                                 $ps_emplr_covrg_rate:12
+                                                 $ps_dl_fehb_pt_prorate:1
+                                                 $ps_gvt_ann_ind:1
+                                                 $ps_gvt_annuity_offset:6
+                                                 $ps_gvt_scd_retire:8
+                                                 $ps_dl_j4c:8
+                                                 $ps_dl_xxs:8
+                                                 $ps_dl_m0h:8
+!                                                $ps_gvt_rtnd_ern_prgm:3    JMW 2/2/2000 delete
+                                                 $ps_gvt_rtnd_pay_plan:2   !JMW 2/2/2000 added
+                                                 $ps_gvt_rtnd_grade:3
+                                                 $ps_gvt_rtnd_step:4
+                                                 $ps_dl_sev_pay_tot:7
+                                                 $ps_accomplishment:2
+                                                 $ps_ethnic_group:1
+                                                 $ps_review_rating:1
+                                                 $ps_manager_level:2
+                                                 $ps_gvt_vet_pref_appt:1
+                                                 $ps_patcob_cd:1
+                                                 $ps_coverage_elect:1
+                                                 $ps_flat_ded_amt:8
+                                                 $ps_coverage_begin_dt:8
+                                                 $ps_gvt_scd_tsp:8
+                                                 $ps_pct_gross:8
+                                                 $ps_investment_pct_g:7
+                                                 $ps_investment_pct_f:7
+                                                 $ps_investment_pct_c:7
+                                                 $ps_dl_ambasdor_salary:8
+                                                 $ps_dl_ipa_salary_amt:8
+                                                 $ps_availability_pay:8
+                                                 $ps_locality_ind:1
+                                                 $ps_gvt_locality_adj:8
+                                                 $ps_gvt_pay_rate_deter:1
+                                                 $ps_retention_allowance_amt:8
+                                                 $ps_supervisory_diff_amt:8
+                                                 $ps_accounting_code:22
+
+    SHOW 'read PS file: ps_gvt_poi --> ' $ps_gvt_poi
+    SHOW 'read PS file: ssn        --> ' $ps_ssn
+    if #end-file = 1
+        move 'Y'                            to $eof_ps_file
+    else
+        string $ps_gvt_poi $ps_ssn by '' into $ps_key
+        let #records_read_ps   = #records_read_ps + 1
+    end-if
+
+!  SHOW 'Ending read-ps-file Procedure'                   ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   data-in-ps-missing                                                      *
+!*       - inserts data into PS_DL_RECONCIL_TBL with flag as data in PS      *
+!*         system missing.                                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure data-in-ps-missing
+  SHOW 'Began data-in-ps-missing Procedure'               ! JMW 3/7/2000 added
+
+    let #records_in_ps_missing = #records_in_ps_missing + 1
+    SHOW 'records in PS missing = ' #records_in_ps_missing     ! JMW 3/7/2000
+
+    if isnull($ips_ssn)
+        move '  '                           to $ips_ssn
+    end-if
+
+    if isnull($ips_empe_name)
+        move '  '                           to $ips_empe_name
+    end-if
+
+    if isnull($ips_submitting_ofc_code)
+        move '  '                           to $ips_submitting_ofc_code
+    end-if
+
+    if isnull($ips_pers_org_code)
+        move '  '                           to $ips_pers_org_code
+    end-if
+
+ begin-SQL on-error=sql-error
+ INSERT INTO PS_DL_RECONCIL_TBL
+ !   (SSN, NAME, DEPTID, GVT_POI, DL_MISSING_FLAG)            JMW 2/2/2000 comment out
+     (NATIONAL_ID, NAME, DEPTID, GVT_POI, DL_MISSING_FLAG)   !JMW 2/2/2000 added
+ VALUES ($ips_ssn, $ips_empe_name, $ips_pers_org_code, $ips_submitting_ofc_code, '1')
+ end-SQL
+
+SHOW 'Ending data-in-ps-missing Procedure'                  ! JMW 3/7/2000 added
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   data-in-ips-missing                                                     *
+!*       - Inserts data into PS_DL_RECONCIL_TBL with flag as data in IPS     *
+!*         system missing.                                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure data-in-ips-missing
+SHOW 'Began data-in-ips-missing Procedure'                ! JMW 3/7/2000 added
+
+    let #records_in_ips_missing = #records_in_ips_missing + 1
+
+    if isnull($ps_ssn)
+        move '  '                           to $ps_ssn
+    end-if
+
+    if isnull($ps_name)
+        move '  '                           to $ps_name
+    end-if
+
+    if isnull($ps_orgcode)
+        move '  '                           to $ps_orgcode
+    end-if
+
+    if isnull($ps_gvt_poi)
+        move '  '                           to $ps_gvt_poi
+    end-if
+
+SHOW 'beginning insert into dl_reconcil_tbl'                   ! JMW 3/7/2000 added
+begin-SQL on-error=sql-error
+INSERT INTO PS_DL_RECONCIL_TBL
+!   (SSN, NAME, DEPTID, GVT_POI, DL_MISSING_FLAG)              !JMW 2/2/2000 comment out
+    (NATIONAL_ID, NAME, DEPTID, GVT_POI, DL_MISSING_FLAG)      !JMW 2/2/2000 added
+VALUES ($ps_ssn, $ps_name, $ps_orgcode, $ps_gvt_poi, '2')
+end-SQL
+
+SHOW 'ending insert into dl_reconcil_tbl'                      ! JMW 3/7/2000 added
+
+SHOW 'Ending data-in-ips-missing Procedure'                    ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-check                                                              *
+!*       - Calls routines which does edit check on each data element from    *
+!*         PS file and IPS file.                                             *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-check
+SHOW 'beginning edit-check procedure'                     ! JMW 3/7/2000 added
+
+    let #ps_total_salary     = to_number($ps_total_salary)
+    let #ps_total_salary     = #ps_total_salary / 100
+    show 'total salary ' #ps_total_salary                    !j PPR361 9/18/2001
+
+    do edit-emp-name
+    do edit-sex
+    do edit-dob
+    do edit-tenure-code
+    do edit-scd-leave
+    do edit-flsa-ind
+    do edit-emp-basis-code
+    do edit-status-cd
+    do edit-retirement-cd
+    do edit-dt-of-grade-e
+    do edit-dt-of-last-inc
+    do edit-accession-dt
+    do edit-occp-series
+    do edit-classification-title
+    do edit-posn-occupied
+    do edit-pay-plan
+    do edit-grade
+    do edit-step
+    do edit-annual-sal
+    do edit-hourly-sal
+    do edit-per-diem-sal
+    do edit-pay-basis
+    do edit-fegli-code
+    do edit-tour-hours
+    do edit-lv-elig-pfc67
+    do edit-lv-elig-flag
+    do edit-lv-elig-ppwo
+    do edit-lv-elig-wkschi
+    !do edit-org
+    do edit-geoloc-cd
+    do edit-hb
+    do edit-hb-emp-amt
+    do edit-hb-govt-amt
+    do edit-pttime-pro-rate
+    do edit-annuity-code
+    do edit-rtmnt-annuity-sum
+    do edit-scd-civ
+    do edit-rtnd-pp
+    do edit-rtnd-grade
+    do edit-rtnd-step
+    do edit-tot-sev-pay
+    do edit-educ-level
+    do edit-min-cd
+    !do edit-perf-rtg
+    do edit-supvry-cd
+    do edit-vet-pref
+    !do edit-patco-cd
+    do edit-tsp-stat
+    do edit-tsp-stat-dt
+    do edit-tsp-scd
+    do edit-tsp-emp-amt
+!j    do edit-tsp-emp-rate-g                               !09/18/01 JNA  PPR361
+!j    do edit-tsp-emp-rate-f                               !09/18/01 JNA  PPR361
+!j    do edit-tsp-emp-rate-c                               !09/18/01 JNA  PPR361
+    do edit-amb-pay-amt
+
+    if #ps_total_salary > #salary_cap
+    else
+        do edit-total-salary
+    end-if
+
+    do edit-ipa-salary
+    do edit-pay-salary-flag
+    do edit-locality-indicator
+
+    if #ps_total_salary > #salary_cap
+    else
+        do edit-locality-adjustment
+    end-if
+
+    do edit-retention-allowance
+    do edit-supervisory-diff-pay
+    do edit-accounting-code
+
+    do check-error-flags
+
+SHOW 'ending edit-check procedure'                        ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-emp-name                                                           *
+!*       - Compares employee name.                                           *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-emp-name
+
+    uppercase $ps_name
+    uppercase $ips_empe_name
+
+    let $ps_name         = translate($ps_name,'.','')
+    let $ips_empe_name   = translate($ips_empe_name,'.','')
+
+
+    if $ps_name != $ips_empe_name
+        move 'Y'                            to $emp_name_error_flag
+    else
+        move 'N'                            to $emp_name_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-sex                                                                *
+!*       - Compares sex from Peoplesoft and IPS system, if they are equal    *
+!*         sex_error_flag is set to 'N', otherwise it is set to 'Y'.         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-sex
+
+    uppercase $ps_sex
+
+    if ($ps_sex               = 'M'   and
+        $ips_empe_name_title  = '1')  or
+       ($ps_sex               = 'F'   and
+        ($ips_empe_name_title = '2'   or
+         $ips_empe_name_title = '3'   or
+         $ips_empe_name_title = '4'))
+        move 'N'                            to $sex_error_flag
+    else
+        move 'Y'                            to $sex_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-dob                                                                *
+!*       - compares birthdate.                                               *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-dob
+
+    if $ps_birthdate != $ips_dob
+        move 'Y'                            to $dob_error_flag
+    else
+        move 'N'                            to $dob_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tenure-code                                                        *
+!*       - Compares tenure codes, if they are equal, tenure_code_error_flag  *
+!*         is set to 'N' otherwise it is set to 'Y'.                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tenure-code
+
+    uppercase $ps_gvt_tenure
+    uppercase $ips_tenure_code
+
+    if $ps_gvt_tenure = $ips_tenure_code
+        move 'N'                            to $tenure_code_error_flag
+    else
+        move 'Y'                            to $tenure_code_error_flag
+    end-if
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-scd-leave                                                          *
+!*       - Compares service date.                                            *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-scd-leave
+
+    if $ps_service_dt != $ips_govt_serv_date
+        move 'Y'                            to $scd_leave_error_flag
+    else
+        move 'N'                            to $scd_leave_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-flsa-ind                                                           *
+!*       - Compares FLSA indicator.                                          *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-flsa-ind
+
+    uppercase $ps_dl_snap_flsa
+    uppercase $ips_flsa_code
+
+    if $ps_dl_snap_flsa != $ips_flsa_code
+        move 'Y'                            to $flsa_ind_error_flag
+    else
+        move 'N'                            to $flsa_ind_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-emp-basis-code                                                     *
+!*       - Compares employment basis codes, if its equal emp_basis_code_error*
+!*         _flag is set to 'N' otherwise it is set to 'Y'.                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-emp-basis-code
+
+    uppercase $ps_empl_basis
+    uppercase $ips_empt_basis_code
+
+    if $ps_empl_basis = 'I'
+        move 'W'                            to $work_empt_basis_code
+    else
+        move $ps_empl_basis                 to $work_empt_basis_code
+    end-if
+
+    if $work_empt_basis_code = $ips_empt_basis_code
+        move 'N'                            to $emp_basis_code_error_flag
+    else
+        move 'Y'                            to $emp_basis_code_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-status-cd                                                          *
+!*       - Compare status code.                                              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-status-cd
+
+    uppercase $ps_empl_status
+    uppercase $ips_empe_status_code
+
+    if $ps_empl_status != $ips_empe_status_code
+        move 'Y'                            to $status_cd_error_flag
+    else
+        move 'N'                            to $status_cd_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-retirement-cd                                                      *
+!*       - Compares retirement code.                                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-retirement-cd
+
+    uppercase $ps_gvt_retire_plan
+    uppercase $ips_retirement_code
+
+    if $ps_gvt_retire_plan != $ips_retirement_code
+        move 'Y'                            to $retirement_cd_error_flag
+    else
+        move 'N'                            to $retirement_cd_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-dt-of-grade-e                                                      *
+!*       - Compares grade entry date.                                        *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-dt-of-grade-e
+
+    if $ps_grade_entry_dt != $ips_grade_date
+        move 'Y'                            to $dt_of_grade_e_error_flag
+    else
+        move 'N'                            to $dt_of_grade_e_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-dt-of-last-inc                                                     *
+!*       - Compares date of last increase.                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-dt-of-last-inc
+
+    if $ps_gvt_dt_lei != $ips_last_increase_date
+        move 'Y'                            to $dt_of_last_inc_error_flag
+    else
+        move 'N'                            to $dt_of_last_inc_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-accession-dt                                                       *
+!*       - Compare hire date.                                                *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-accession-dt
+
+    if $ps_hire_dt != $ips_accession_date
+        move 'Y'                            to $accession_dt_error_flag
+    else
+        move 'N'                            to $accession_dt_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-occp-series                                                        *
+!*       - Compares occupational series.                                     *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-occp-series
+
+    uppercase $ps_gvt_occ_series
+    uppercase $ips_occup_series
+
+    if $ps_gvt_occ_series != $ips_occup_series
+        move 'Y'                            to $occp_series_error_flag
+    else
+        move 'N'                            to $occp_series_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-classification-title                                               *
+!*       - Compares classification titles.                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-classification-title
+
+    uppercase $ps_gvt_posn_title_cd
+    uppercase $ips_classification_title
+
+    if $ps_gvt_posn_title_cd != $ips_classification_title
+        move 'Y'                            to $classification_title_error_flag
+    else
+        move 'N'                            to $classification_title_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-posn-occupied                                                      *
+!*       - Compares Position occupied, if its equal posn_occupied_error_flag *
+!*         is set to 'N' otherwise it is set to 'Y'.                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-posn-occupied
+
+    uppercase $ps_gvt_posn_occupied
+    uppercase $ips_position_occupied
+
+    if $ps_gvt_posn_occupied = $ips_position_occupied
+        move 'N'                            to $posn_occupied_error_flag
+    else
+        move 'Y'                            to $posn_occupied_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-pay-plan                                                           *
+!*       - Compares Pay plan, if they are equal, pay_plan_error flag is set  *
+!*         to 'N', otherwise it is set to 'Y'.                               *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-pay-plan
+
+!   uppercase $ps_ern_program      JMW 2/2/2000 commented out
+    uppercase $ps_gvt_pay_plan    !JMW 2/2/2000 added
+    uppercase $ips_pay_plan
+
+    move 'N'                                to $condition_flag
+
+!   if (($ps_ern_program   = 'ED'  or                            JMW 2/2/2000 comment out
+!        $ps_ern_program   = 'EE'  or                            JMW 2/2/2000 comment out
+!        $ps_ern_program   = 'EF'  or                            JMW 2/2/2000 comment out
+!        $ps_ern_program   = 'EG') and                           JMW 2/2/2000 comment out
+!       $ips_pay_plan      = 'EC') or                            JMW 2/2/2000 comment out
+!      (($ps_ern_program   = 'FA'  or                            JMW 2/2/2000 comment out
+!        $ps_ern_program   = 'FS') and                           JMW 2/2/2000 comment out
+!       $ips_pay_plan      = 'FC') or                            JMW 2/2/2000 comment out
+!      ($ps_ern_program    = 'ZZ'  and                           JMW 2/2/2000 comment out
+!       $ips_pay_plan      = 'WO')                               JMW 2/2/2000 comment out
+!       move 'Y'                            to $condition_flag   JMW 2/2/2000 comment out
+! John Williford commented the section above out and replaced it with the section below
+! for readability 2/2/2000
+
+    if (($ps_gvt_pay_plan   = 'ED'  or                           !JMW 2/2/2000 added
+         $ps_gvt_pay_plan   = 'EE'  or                           !JMW 2/2/2000 added
+         $ps_gvt_pay_plan   = 'EF'  or                           !JMW 2/2/2000 added
+         $ps_gvt_pay_plan   = 'EG') and                          !JMW 2/2/2000 added
+        $ips_pay_plan       = 'EC') or                           !JMW 2/2/2000 added
+       (($ps_gvt_pay_plan   = 'FA'  or                           !JMW 2/2/2000 added
+         $ps_gvt_pay_plan   = 'FS') and                          !JMW 2/2/2000 added
+        $ips_pay_plan       = 'FC') or                           !JMW 2/2/2000 added
+       ($ps_gvt_pay_plan    = 'ZZ'  and                          !JMW 2/2/2000 added
+        $ips_pay_plan       = 'WO')                              !JMW 2/2/2000 added
+        move 'Y'                            to $condition_flag   !JMW 2/2/2000 added
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+!    if $ps_ern_program  != $ips_pay_plan and                    JMW 2/2/2000 comment out
+     if $ps_gvt_pay_plan != $ips_pay_plan and                   !JMW 2/2/2000 added
+       $condition_flag  = 'N'
+        move 'Y'                            to $pay_plan_error_flag
+    else
+        move 'N'                            to $pay_plan_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-grade                                                              *
+!*       - Compares pay grade.                                               *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-grade
+
+    uppercase $ps_grade
+    uppercase $ips_pay_grade
+
+    if $ps_grade != $ips_pay_grade
+        move 'Y'                            to $grade_error_flag
+    else
+        move 'N'                            to $grade_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-step                                                               *
+!*       - Compares pay step.                                                *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-step
+
+    uppercase $ps_step
+    uppercase $ips_pay_step
+
+    if $ps_step != $ips_pay_step
+        move 'Y'                            to $step_error_flag
+    else
+        move 'N'                            to $step_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-annual-sal                                                         *
+!*       - Compares annual salary, if they are equal annual_sal_error_flag   *
+!*         is set to 'N' otherwise it is set to 'Y'.                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-annual-sal
+
+    uppercase $ps_empl_type
+
+    let #ps_total_salary          = to_number($ps_total_salary)
+    let #ps_total_salary          = #ps_total_salary / 100
+    let #ps_adjusted_basic_pay    = #ps_total_salary
+    let #ips_base_pay_annual_rate = to_number($ips_base_pay_annual_rate)
+
+    if #ps_adjusted_basic_pay != #ips_base_pay_annual_rate and
+       $ps_empl_type           = 'PA'
+        move 'Y'                            to $annual_sal_error_flag
+    else
+        move 'N'                            to $annual_sal_error_flag
+
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-hourly-sal                                                         *
+!*       - Compares hourly salary, if they are equal, hourly_sal_error_flag  *
+!*         is set to 'N' otherwise it is set to 'N'.                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-hourly-sal
+    let #ps_total_salary          = to_number($ps_total_salary)
+    let #ps_total_salary          = #ps_total_salary / 100
+    let #ips_base_pay_hr_day_rate = to_number($ips_base_pay_hr_day_rate)
+    let #ips_base_pay_hr_day_rate = #ips_base_pay_hr_day_rate / 100
+    let #ps_adjusted_basic_pay    = #ps_total_salary
+
+    if #ps_adjusted_basic_pay != #ips_base_pay_hr_day_rate and
+       $ps_empl_type           = 'PH'
+        move 'Y'                            to $hourly_sal_error_flag
+    else
+        move 'N'                            to $hourly_sal_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-per-diem-sal                                                       *
+!*       - Compares Per Diem Salary, if they are equal per_diem_sal_erro_flag*
+!*         is set to 'N', otherwise it is set to 'Y'.                        *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-per-diem-sal
+
+    let #ps_total_salary          = to_number($ps_total_salary)
+    let #ps_total_salary          = #ps_total_salary / 100
+    let #ips_base_pay_hr_day_rate = to_number($ips_base_pay_hr_day_rate)
+    let #ips_base_pay_hr_day_rate = #ips_base_pay_hr_day_rate / 100
+    let #ps_adjusted_basic_pay    = #ps_total_salary
+
+    if #ps_adjusted_basic_pay != #ips_base_pay_hr_day_rate and
+       $ps_empl_type           = 'PD'
+        move 'Y'                            to $per_diem_sal_error_flag
+    else
+        move 'N'                            to $per_diem_sal_error_flag
+
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-pay-basis                                                          *
+!*       - Compares Pay basis, if they are equal pay_basis_error_flag is     *
+!*         set to 'N' otherwise it is set to 'Y'.                            *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-pay-basis
+
+    uppercase $ps_gvt_pay_basis
+    uppercase $ips_pay_basis_code
+
+    if $ps_gvt_pay_basis = $ips_pay_basis_code
+        move 'N'                            to $pay_basis_error_flag
+    else
+        move 'Y'                            to $pay_basis_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-fegli-code                                                         *
+!*       - Compares fegli code.                                              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-fegli-code
+
+    uppercase $ps_gvt_fegli
+    uppercase $ips_fegli_code
+
+    if $ps_gvt_fegli != $ips_fegli_code
+        move 'Y'                            to $fegli_code_error_flag
+    else
+        move 'N'                            to $fegli_code_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tour-hours                                                         *
+!*       - Compares tour hours, if they are equal tour_hours_error_flag is   *
+!*         set to 'N' otherwise it is set to 'Y'.                            *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tour-hours
+
+    let #ps_std_hours                  = to_number($ps_std_hours)
+    let #ips_part_time_tour_hrs        = to_number($ips_part_time_tour_hrs)
+
+    if #ips_part_time_tour_hrs != #ps_std_hours
+        move 'Y'                                to $tour_hours_error_flag
+    else
+        move 'N'                                to $tour_hours_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-lv-elig-pfc67                                                      *
+!*       - Compares leave eligiblity when special employment code = '67'.    *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-lv-elig-pfc67
+
+    if ($ps_dl_special_emp_cd     = '67')  and
+       ($ps_dl_leave_elig_cd     != '1'    or
+        $ips_leave_eligible_code != '1')
+        move 'Y'                            to $lv_elig_pfc67_error_flag
+    else
+        move 'N'                            to $lv_elig_pfc67_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-lv-elig-flag                                                       *
+!*       - Compares Leave Eligibility flag, if they are equal lv_elig_flag_er*
+!*         ror is set to 'N' otherwise it is set to 'Y'.                     *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-lv-elig-flag
+
+    move 'N'                                to $condition_flag
+
+    if $ips_leave_eligible_code = '2'  or
+       $ips_leave_eligible_code = '3'
+        move '2'                            to $work_leave_eligible_code
+    else
+        if $ips_leave_eligible_code = '4'
+            move '4'                        to $work_leave_eligible_code
+        else
+            move '1'                        to $work_leave_eligible_code
+        end-if
+    end-if
+
+    if $ps_dl_leave_elig_cd =  $work_leave_eligible_code
+        move 'N'                            to $lv_elig_flag_error_flag
+    else
+        move 'Y'                            to $lv_elig_flag_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-lv-elig-ppwo                                                       *
+!*       - Compares leave eligiblity when gvt_fegli = 'WO'.                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-lv-elig-ppwo
+
+    uppercase $ps_gvt_fegli
+
+    if ($ps_gvt_fegli             = 'WO') and
+       ($ps_dl_leave_elig_cd     != '1'   or
+        $ips_leave_eligible_code != '1')
+        move 'Y'                            to $lv_elig_ppwo_error_flag
+    else
+        move 'N'                            to $lv_elig_ppwo_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-lv-elig-wkschi                                                     *
+!*       - Compares leave eligibility when, ful_part_time = 'I'.             *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-lv-elig-wkschi
+
+    if ($ps_empl_basis             = 'I') and
+       ($ps_dl_leave_elig_cd      != '1'  or
+        $ips_leave_eligible_code  != '1')
+        move 'Y'                            to $lv_elig_wkschi_error_flag
+    else
+        move 'N'                            to $lv_elig_wkschi_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-org                                                                *
+!*       - Compares department id.                                           *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-org
+
+    uppercase $ps_orgcode
+    uppercase $ips_pers_org_code
+
+    if $ps_orgcode != $ips_pers_org_code
+        move 'Y'                            to $org_error_flag
+    else
+        move 'N'                            to $org_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-geoloc-cd                                                          *
+!*       - Compare geographical location code.                               *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-geoloc-cd
+
+    uppercase $ps_geoloc_cd
+    uppercase $ips_geographic_location
+
+    if $ps_gvt_geoloc_cd != $ips_geographic_location
+        move 'Y'                            to $geoloc_cd_error_flag
+    else
+        move 'N'                            to $geoloc_cd_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-hb                                                                 *
+!*       - Compares coverage code.                                           *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-hb
+
+    uppercase $ps_covrg_cd
+
+    move 'N'                                to $condition_flag
+
+    if ($ps_covrg_cd   = 'X'     or
+        $ps_covrg_cd   = 'Y'     or
+        $ps_covrg_cd   = 'Z')    and
+       ($ips_fehb_code = '000'   or
+        $ips_fehb_code = '990'   or
+        $ips_fehb_code = '998'   or
+        $ips_fehb_code = '999')
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    let $ps_benefit_plan = substr($ps_benefit_plan,1,2) ||
+                           substr($ps_covrg_cd,1,1)
+
+    if $ps_benefit_plan != $ips_fehb_code
+      if $ps_benefit_plan = '000' and                                                !JMW 4/26/2000 added
+         $ips_fehb_code = '990' or $ips_fehb_code = '998' or $ips_fehb_code = '999'  !JMW 4/26/2000 added                                 !JMW 4/26/2000 added
+         move 'N'                            to $hb_error_flag                       !JMW 4/26/2000 added
+      else                                                                           !JMW 4/26/2000 added
+         move 'Y'                            to $hb_error_flag                       !JMW 4/26/2000 added
+      end-if                                                                         !JMW 4/26/2000 added
+    else
+        move 'N'                            to $hb_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-hb-emp-amt                                                         *
+!*       - Compares employee coverage rate.                                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-hb-emp-amt
+
+    let #ps_empl_covrg_rate      = to_number($ps_empl_covrg_rate)
+    let #ps_empl_covrg_rate      = #ps_empl_covrg_rate / 10000
+    let #ips_fehb_empshr_ded_amt = to_number($ips_fehb_empshr_ded_amt)
+    let #ips_fehb_empshr_ded_amt = #ips_fehb_empshr_ded_amt / 100
+
+    if #ps_empl_covrg_rate != #ips_fehb_empshr_ded_amt
+        move 'Y'                            to $hb_emp_amt_error_flag
+    else
+        move 'N'                            to $hb_emp_amt_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-hb-govt-amt                                                        *
+!*       - Compares employer coverage rate.                                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-hb-govt-amt
+
+    let #ps_emplr_covrg_rate     = to_number($ps_emplr_covrg_rate)
+    let #ps_emplr_covrg_rate     = #ps_emplr_covrg_rate / 10000
+    let #ips_fehb_agyshr_ded_amt = to_number($ips_fehb_agyshr_ded_amt)
+    let #ips_fehb_agyshr_ded_amt = #ips_fehb_agyshr_ded_amt / 100
+
+    if #ps_emplr_covrg_rate != #ips_fehb_agyshr_ded_amt
+        move 'Y'                            to $hb_govt_amt_error_flag
+    else
+        move 'N'                            to $hb_govt_amt_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-pttime-pro-rate                                                    *
+!*       - Compares part time prorate.                                       *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-pttime-pro-rate
+
+    if $ips_fehb_part_time_prorate = ' '
+        move '0'                            to $work_part_time_prorate
+    else
+        move $ips_fehb_part_time_prorate    to $work_part_time_prorate
+    end-if
+
+    if $ps_dl_fehb_pt_prorate = '2'  or
+       $ps_dl_fehb_pt_prorate = '0'  or
+       $ps_dl_fehb_pt_prorate = ' '
+        move '0'                            to $work_part_time_indicator
+    else
+        if $ps_dl_fehb_pt_prorate = '1'
+            move '1'                        to $work_part_time_indicator
+        else
+            move 'X'                        to $work_part_time_indicator
+        end-if
+    end-if
+
+    if $work_part_time_prorate != $work_part_time_indicator
+        move 'Y'                            to $pttime_prorate_error_flag
+    else
+        move 'N'                            to $pttime_prorate_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-annuity-code                                                       *
+!*       - Compares annuity code.                                            *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-annuity-code
+
+    uppercase $ips_annuitant_code
+    uppercase $ps_gvt_ann_ind
+
+    move 'N'                                to $condition_flag
+
+    if (($ips_annuitant_code  = '0'  or
+         $ips_annuitant_code  = ' '  or
+         $ips_annuitant_code  = '9'  or
+         $ips_annuitant_code  = 'G'  or
+         $ips_annuitant_code  = 'H'  or
+         $ips_annuitant_code  = 'J') and
+        $ps_gvt_ann_ind       = '9') or
+       ($ips_annuitant_code   = '6'  and
+        $ps_gvt_ann_ind       = '6') or
+       ($ips_annuitant_code   = '8'  and
+        $ps_gvt_ann_ind       = '8') or
+       ($ips_annuitant_code   = '1'  and
+        $ps_gvt_ann_ind       = '1') or
+       ($ips_annuitant_code   = '2'  and
+        $ps_gvt_ann_ind       = '2') or
+       (($ips_annuitant_code  = 'A'  or
+         $ips_annuitant_code  = 'D') and
+        $ps_gvt_ann_ind       = 'A'  or
+        $ps_gvt_ann_ind       = 'D') or
+       ($ips_annuitant_code   = 'E'  and
+        $ps_gvt_ann_ind       = 'E') or
+       ($ips_annuitant_code   = 'F'  and
+        $ps_gvt_ann_ind       = 'F') or
+       ($ips_annuitant_code   = '3'  and
+        $ps_gvt_ann_ind       = '3') or
+       (($ips_annuitant_code  = '4'  or
+         $ips_annuitant_code  = '5'  or
+         $ips_annuitant_code  = '7'  or
+         $ips_annuitant_code  = '8') and
+        ($ps_gvt_ann_ind      = '4'  or
+         $ps_gvt_ann_ind      = '5'  or
+         $ps_gvt_ann_ind      = '7'  or
+         $ps_gvt_ann_ind      = '8'))
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if $condition_flag = 'N'
+        move 'Y'                            to $annuity_code_error_flag
+    else
+        move 'N'                            to $annuity_code_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-rtmnt-annuity-sum                                                  *
+!*       - Compares retirement annuity sum.                                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-rtmnt-annuity-sum
+
+    move 'N'                                to $condition_flag
+    let #ips_annuity_amt        = to_number($ips_annuity_amt)
+    let #ps_gvt_annuity_offset  = to_number($ps_gvt_annuity_offset)
+
+    if #ips_annuity_amt = #ps_gvt_annuity_offset
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if #ips_annuity_amt         = 0    and
+       #ps_gvt_annuity_offset  != 0  and
+       $condition-flag          = 'N'
+        move 'Y'                            to $rtmnt_annuity_sum_error_flag
+    else
+        move 'N'                            to $rtmnt_annuity_sum_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-scd-civ                                                            *
+!*       - Compare retire gvt. service date.                                 *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-scd-civ
+
+    if $ps_gvt_scd_retire != $ips_retire_govt_service_date
+        move 'Y'                            to $scd_civ_error_flag
+    else
+        move 'N'                            to $scd_civ_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-rtnd-pp                                                            *
+!*       - Compare retained pay plan.                                        *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-rtnd-pp
+
+    move 'N'                                to $condition_flag
+
+!   if $ps_gvt_rtnd_ern_prgm    < '1'   and                      JMW 2/2/2000 comment out
+    if $ps_gvt_rtnd_pay_plan    < '1'   and                     !JMW 2/2/2000 added
+       $ips_retained_pay_plan  != '00'  and
+       $ips_retained_pay_plan  != ' '
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+!    if $ps_gvt_rtnd_ern_prgm != $ips_retained_pay_plan  and         JMW 2/2/2000 comment out
+     if $ps_gvt_rtnd_pay_plan != $ips_retained_pay_plan  and        !JMW 2/2/2000 added
+
+       $condition_flag        = 'N'
+        move 'Y'                            to $rtnd_pp_error_flag
+    else
+        move 'N'                            to $rtnd_pp_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-rtnd-grade                                                         *
+!*       - Compare retained pay grade.                                       *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-rtnd-grade
+
+    move 'N'                                to $condition_flag
+
+    if $ps_gvt_rtnd_grade       < '1'   and
+       $ips_retained_pay_grade != '00'  and
+       $ips_retained_pay_grade != ' '
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if $ps_gvt_rtnd_grade != $ips_retained_pay_grade and
+       $condition_flag     = 'N'
+        move 'Y'                            to $rtnd_grade_error_flag
+    else
+        move 'N'                            to $rtnd_grade_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-rtnd-step                                                          *
+!*       - Compare retained pay step.                                        *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-rtnd-step
+
+    move 'N'                                to $condition_flag
+    let #ps_gvt_rtnd_step       = to_number($ps_gvt_rtnd_step)
+    let #ips_retained_pay_step  = to_number($ips_retained_pay_step)
+
+    if #ps_gvt_rtnd_step      < 1   and
+       $ips_retained_pay_step > ' '
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if #ps_gvt_rtnd_step != #ips_retained_pay_step and
+       $condition_flag    = 'N'
+        move 'Y'                            to $rtnd_step_error_flag
+    else
+        move 'N'                            to $rtnd_step_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tot-sev-pay                                                        *
+!*       - Compare severance pay balance.                                    *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tot-sev-pay
+
+    move 'N'                                to $condition_flag
+
+    let #ps_dl_sev_pay_tot        = to_number($ps_dl_sev_pay_tot)
+    let #ips_severance_pay_bal    = to_number($ips_severance_pay_bal)
+    let #ips_severance_pay_bal    = #ips_severance_pay_bal / 100
+
+    if ($ps_dl_sev_pay_tot      = ' '  or
+        #ps_dl_sev_pay_tot      = 0)   and
+        #ips_severance_pay_bal  < 1
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if #ps_dl_sev_pay_tot  != #ips_severance_pay_bal  and
+       $condition_flag      = 'N'
+        move 'Y'                            to $tot_sev_pay_error_flag
+    else
+        move 'N'                            to $tot_sev_pay_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-educ-level                                                         *
+!*       - Compares Educational level.                                       *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-educ-level
+
+    uppercase $ips_educational_attainment
+    uppercase $ps_accomplishment
+
+    if $ips_educational_attainment != $ps_accomplishment
+        move 'Y'                            to $educ_level_error_flag
+    else
+        move 'N'                            to $educ_level_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-min-cd                                                             *
+!*       - Compares minority code.                                           *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-min-cd
+
+    uppercase $ps_ethnic_group
+    uppercase $ips_minority_grp_code
+
+    if ($ps_ethnic_group         = 'A'  and
+        $ips_minority_grp_code   = '5') or
+       (($ps_ethnic_group        = 'B'  or
+         $ps_ethnic_group        = 'F'  or
+         $ps_ethnic_group        = 'G'  or
+         $ps_ethnic_group        = 'H'  or
+         $ps_ethnic_group        = 'J'  or
+         $ps_ethnic_group        = 'K'  or
+         $ps_ethnic_group        = 'L'  or
+         $ps_ethnic_group        = 'M'  or
+         $ps_ethnic_group        = 'N'  or
+         $ps_ethnic_group        = 'P'  or
+         $ps_ethnic_group        = 'Q') and
+        $ips_minority_grp_code   = '4') or
+       ($ps_ethnic_group         = 'C'  and
+        $ips_minority_grp_code   = '1') or
+       ($ps_ethnic_group         = 'D'  and
+        $ips_minority_grp_code   = '2') or
+       (($ps_ethnic_group        = 'E'  or
+         $ps_ethnic_group        = 'Y') and
+        $ips_minority_grp_code   = '7') or
+       ($ps_ethnic_group         = 'I'  and
+        $ips_minority_grp_code   = ' ') or
+       ($ps_ethnic_group         = $ips_minority_grp_code)
+        move 'N'                            to $min_cd_error_flag
+    else
+        move 'Y'                            to $min_cd_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-perf-rtg                                                           *
+!*       - compare performance rating.                                       *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-perf-rtg
+
+    uppercase $ps_review_rating
+    uppercase $ips_performance_rating
+
+    if $ps_review_rating != $ips_performance_rating
+        move 'Y'                            to $perf_rtg_error_flag
+    else
+        move 'N'                            to $perf_rtg_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-supvry-cd                                                          *
+!*       - Compares supervisory code.                                        *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-supvry-cd
+
+    uppercase $ps_manager_level
+    uppercase $ips_supervisory_code
+
+    if (($ips_supervisory_code = 'Y'  or
+         $ips_supervisory_code = '1'  or
+         $ips_supervisory_code = '2') and
+        $ps_manager_level      = '1') or
+       (($ips_supervisory_code = 'Y'  or
+         $ips_supervisory_code = 'M') and
+        $ps_manager_level      = '2') or
+       (($ips_supervisory_code = 'M'  or
+         $ips_supervisory_code = '3') and
+        $ps_manager_level      = '3') or
+       (($ips_supervisory_code = 'S'  or
+         $ips_supervisory_code = '4') and
+        $ps_manager_level      = '4') or
+       (($ips_supervisory_code = 'O'  or
+         $ips_supervisory_code = '5') and
+        $ps_manager_level      = '5') or
+       (($ips_supervisory_code = 'L'  or
+         $ips_supervisory_code = '6') and
+        $ps_manager_level      = '6') or
+       ($ips_supervisory_code  = 'E'  and
+        $ps_manager_level      = '7') or
+       (($ips_supervisory_code = 'N'  or
+         $ips_supervisory_code = '8') and
+        $ps_manager_level      = '8') or
+       ($ips_supervisory_code  = ' '  and
+        $ps_manager_level      = '9') or
+       ($ips_supervisory_code  = '7'  and
+        $ps_manager_level      = ' ') or
+       ($ips_supervisory_code  = $ps_manager_level)
+        move 'N'                            to $supvry_cd_error_flag
+    else
+        move 'Y'                            to $supvry_cd_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-vet-pref                                                           *
+!*       - Compare vetrans preference.                                       *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-vet-pref
+
+    uppercase $ps_gvt_vet_pref_appt
+    uppercase $ips_veterans_preference
+
+    if $ps_gvt_vet_pref_appt != $ips_veterans_preference
+        move 'Y'                            to $vet_pref_error_flag
+    else
+        move 'N'                            to $vet_pref_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-patco-cd                                                           *
+!*       - compares patco code.                                              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-patco-cd
+
+    uppercase $ps_patcob_cd
+    uppercase $ips_patcob_code
+
+    if $ps_patcob_cd != $ips_patco_code
+        move 'Y'                            to $patco_cd_error_flag
+    else
+        move 'N'                            to $patco_cd_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tsp-stat                                                           *
+!*       - Compare tsp stat.                                                 *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tsp-stat
+
+    uppercase $ps_coverage_elect
+    uppercase $ips_tsp_status_code
+
+    move 'N'                                to $condition_flag
+
+    if $ps_coverage_elect != $ips_tsp_status_code
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if $ps_coverage_elect != $ips_tsp_status_code and
+       $condition_flag     = 'N'
+        move 'Y'                            to $tsp_stat_error_flag
+    else
+        move 'N'                            to $tsp_stat_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tsp-stat-dt                                                        *
+!*       - Compare tsp stat dt.                                              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tsp-stat-dt
+
+    uppercase $ps_gvt_retire_plan
+
+    move 'N'                                to $condition_flag
+
+    if ($ps_gvt_retire_plan  != 'K'   and
+        $ps_gvt_retire_plan  != 'M'   and
+        $ps_coverage_elect   != 'E'   and
+        $ps_coverage_elect   != 'T'   and
+        $ips_tsp_status_date >= ' ')  or
+       ($ps_gvt_fegli         = ' ')
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if $ps_coverage_begin_dt != $ips_tsp_status_date  and
+       $condition_flag        = 'N'
+        move 'Y'                            to $tsp_stat_dt_error_flag
+    else
+        move 'N'                            to $tsp_stat_dt_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tsp-scd                                                            *
+!*       - Compare tsp service compute date.                                 *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tsp-scd
+
+    move 'N'                                to $condition_flag
+    let #ips_tsp_service_compute_date = to_number($ips_tsp_service_compute_date)
+
+    if $ps_gvt_scd_tsp                = '' and
+       #ips_tsp_service_compute_date  < 1
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if ($ps_gvt_retire_plan  = 'K'                             or
+        $ps_gvt_retire_plan  = 'M')                            and
+       $ps_gvt_scd_tsp      != $ips_tsp_service_compute_date   and
+       $condition_flag       = 'N'
+        move 'Y'                            to $tsp_scd_error_flag
+    else
+        move 'N'                            to $tsp_scd_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tsp-emp-amt                                                        *
+!*       - compare flat deduction amount.                                    *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tsp-emp-amt
+
+    move 'N'                                to $condition_flag
+    let #ps_flat_ded_amt    = to_number($ps_flat_ded_amt)
+    let #ps_flat_ded_amt    = #ps_flat_ded_amt / 100
+    let #ips_tsp_empe_amt   = to_number($ips_tsp_empe_amt)
+
+    if (#ps_flat_ded_amt   = 0    and
+        #ips_tsp_empe_amt  < 1)   or
+       ($ps_coverage_elect = 'T'  and
+        #ps_flat_ded_amt   < 1    and
+        #ips_tsp_empe_amt  > 0)
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if #ps_flat_ded_amt != #ips_tsp_empe_amt  and
+       $condition_flag   = 'N'
+        move 'Y'                            to $tsp_emp_amt_error_flag
+    else
+        move 'N'                            to $tsp_emp_amt_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tsp-emp-rate-g                                                     *
+!*       -  Compares investment percentage when investment option is 'G'.    *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tsp-emp-rate-g
+
+    move 'N'                                to $condition_flag
+    let #ps_investment_pct_g     = to_number($ps_investment_pct_g)
+    let #ps_investment_pct_g     = #ps_investment_pct_g / 100
+    let #ips_tsp_empl_dist_amt_g = to_number($ips_tsp_empl_dist_amt_g)
+    let #ips_tsp_empl_dist_amt_g = #ips_tsp_empl_dist_amt_g / 100
+
+    if (#ps_investment_pct_g      = 0    and
+        #ips_tsp_empl_dist_amt_g  < 1)   or
+       ($ps_coverage_elect        = 'T'  and
+        #ps_investment_pct_g      < 1    and
+        #ips_tsp_empl_dist_amt_g  < 1)
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if #ps_investment_pct_g != #ips_tsp_empl_dist_amt_g  and
+       $condition_flag       = 'N'
+        move 'Y'                            to $tsp_emp_rate_g_error_flag
+    else
+        move 'N'                            to $tsp_emp_rate_g_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tsp-emp-rate-f                                                     *
+!*       -  Compares investment percentage when investment option is 'F'.    *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tsp-emp-rate-f
+
+    move 'N'                                to $condition_flag
+    let #ps_investment_pct_f     = to_number($ps_investment_pct_f)
+    let #ps_investment_pct_f     = #ps_investment_pct_f / 100
+    let #ips_tsp_empl_dist_amt_f = to_number($ips_tsp_empl_dist_amt_f)
+    let #ips_tsp_empl_dist_amt_f = #ips_tsp_empl_dist_amt_f / 100
+
+    if (#ps_investment_pct_f      = 0    and
+        #ips_tsp_empl_dist_amt_f  < 1)   or
+       ($ps_coverage_elect        = 'T'  and
+        #ps_investment_pct_f      < 1    and
+        #ips_tsp_empl_dist_amt_g  > 1)
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if #ps_investment_pct_f != #ips_tsp_empl_dist_amt_f  and
+       $condition_flag       = 'N'
+        move 'Y'                            to $tsp_emp_rate_f_error_flag
+    else
+        move 'N'                            to $tsp_emp_rate_f_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-tsp-emp-rate-c                                                     *
+!*       -  Compares investment percentage when investment option is 'C'.    *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-tsp-emp-rate-c
+
+    move 'N'                                to $condition_flag
+    let #ps_investment_pct_c     = to_number($ps_investment_pct_c)
+    let #ps_investment_pct_c     = #ps_investment_pct_c / 100
+    let $ips_tsp_empl_dist_amt_c = translate($ips_tsp_empl_dist_amt_c,' ','0')
+    let #ips_tsp_empl_dist_amt_c = to_number($ips_tsp_empl_dist_amt_c)
+    let #ips_tsp_empl_dist_amt_c = #ips_tsp_empl_dist_amt_c / 100
+
+    if (#ps_investment_pct_c      = 0    and
+        #ips_tsp_empl_dist_amt_c  < 1)   or
+       ($ps_coverage_elect        = 'T'  and
+        #ps_investment_pct_c      < 1    and
+        #ips_tsp_empl_dist_amt_c  > 1)
+        move 'Y'                            to $condition_flag
+    else
+        move 'N'                            to $condition_flag
+    end-if
+
+    if #ps_investment_pct_c != #ips_tsp_empl_dist_amt_c  and
+       $condition_flag       = 'N'
+        move 'Y'                            to $tsp_emp_rate_c_error_flag
+    else
+        move 'N'                            to $tsp_emp_rate_c_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-amb-pay-amt                                                        *
+!*       - Compares ambasdor salary.                                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-amb-pay-amt
+
+    let #ps_dl_ambasdor_salary = to_number($ps_dl_ambasdor_salary)
+    let #ips_ambassador_salary = to_number($ips_ambassador_salary)
+    let #ips_ambassador_salary = #ips_ambassador_salary / 100
+
+    if #ps_dl_ambasdor_salary != #ips_ambassador_salary
+        move 'Y'                            to $amb_pay_amt_error_flag
+    else
+        move 'N'                            to $amb_pay_amt_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-total-salary                                                       *
+!*       - Compares total salary, if they are equal total_salary_error_flag  *
+!*         is set to 'N', otherwise it is set to 'Y'.                        *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-total-salary
+
+    let #ps_total_salary     = to_number($ps_total_salary)
+    let #ps_total_salary     = #ps_total_salary / 100
+    let #ips_total_salary    = to_number($ips_total_salary)
+    let #ips_total_salary    = #ips_total_salary / 100
+
+    if #ips_total_salary > #salary_cap                !j PPR361 09/18/2001
+      let #ips_total_salary    = #salary_cap          !j PPR361 09/18/2001
+    end-if                                            !j PPR361 09/18/2001
+
+    if #ps_total_salary != #ips_total_salary
+        move 'Y'                            to $total_salary_error_flag
+    else
+        move 'N'                            to $total_salary_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-ipa-salary                                                         *
+!*       - Compares ipa salary.                                              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-ipa-salary
+
+    let #ps_dl_ipa_salary_amt   = to_number($ps_dl_ipa_salary_amt)
+    let #ips_ipa_salary         = to_number($ips_ipa_salary)
+    let #ips_ipa_salary         = #ips_ipa_salary / 100
+
+    if #ps_dl_ipa_salary_amt != #ips_ipa_salary
+        move 'Y'                            to $ipa_salary_error_flag
+    else
+        move 'N'                            to $ipa_salary_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-pay-salary-flag                                                    *
+!*       - Compare salary flag, if they are equal, pay_salary_flag_error_flag*
+!*         is set to 'N' otherwise it is set to 'Y'.                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-pay-salary-flag
+
+    let #ps_availability_pay         = to_number($ps_availability_pay)
+    let #ps_availability_pay         = #ps_availability_pay / 100
+    let #ips_auo_amt                 = to_number($ips_auo_amt)
+    let #ips_auo_amt                 = #ips_auo_amt / 100
+
+    if #ps_availability_pay != #ips_auo_amt
+        move 'Y'                            to $pay_salary_flag_error_flag
+    else
+        move 'N'                            to $pay_salary_flag_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-locality-indicator                                                 *
+!*       - Compares locality indicator, if they are not equal, locality_indic*
+!*         ator_error_flag is set to 'Y' otherwise 'N'.                      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-locality-indicator
+
+!*************  End Modification 09/18/01 JNA  PPR361  ******************
+      move 'N'                            to $locality_indicator_error_flag    !j
+    if $ips_locality_pay_ind = ' '  or $ips_locality_pay_ind = ''              !j
+       let $ips_locality_pay_ind = 'N'                                         !j
+    end-if                                                                     !j
+    if $ps_locality_ind != $ips_locality_pay_ind                               !j
+        move 'Y'                            to $locality_indicator_error_flag  !j
+    else                                                                       !j
+        move 'N'                            to $locality_indicator_error_flag  !j
+    end-if                                                                     !j
+!*************  End Modification 09/18/01 JNA  PPR361  ******************
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-locality-adjustment                                                *
+!*       - Compares locality adjustment, if they are not equal, locallity_adj*
+!*         ustment_error_flag is set to 'Y', otherwise 'N'.                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-locality-adjustment
+
+    let #ps_gvt_locality_adj   = to_number($ps_gvt_locality_adj)
+    let #ps_gvt_locality_adj   = #ps_gvt_locality_adj / 100
+    let #ips_locality_pay_amt  = to_number($ips_locality_pay_amt)
+    let #ips_locality_pay_amt  = #ips_locality_pay_amt / 100
+    if  #ps_gvt_locality_adj >= 0                                     !j PPR361 09/18/2001
+      if #ps_gvt_locality_adj != #ips_locality_pay_amt
+          move 'Y'                            to $locality_adjustment_error_flag
+      else
+          move 'N'                            to $locality_adjustment_error_flag
+      end-if
+    end-if                                                            !j PPR361 09/18/2001
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-retention-allowance                                                *
+!*       - Compares retention allowance amount, if they are not equal        *
+!*         retention_allowance_error_flag is set to 'Y' otherwise 'N'.       *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-retention-allowance
+
+    let #ps_retention_allowance_amt  = to_number($ps_retention_allowance_amt)
+    let #ps_retention_allowance_amt  = #ps_retention_allowance_amt / 100
+    let #ps_ret_amt =  #ps_retention_allowance_amt - mod(#ps_retention_allowance_amt,1) !j PPR361 09/18/2001
+    let #ips_retention_allowance_amt = to_number($ips_retention_allowance_amt)
+    let #ips_retention_allowance_amt = #ips_retention_allowance_amt / 100
+
+    if #ps_ret_amt != #ips_retention_allowance_amt                                      !j PPR361 09/18/2001
+        move 'Y'                            to $retention_allowance_error_flag
+    else
+        move 'N'                            to $retention_allowance_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-supervisory-diff-pay                                               *
+!*       - Compares supervisory diff. pay amount, if they are not equal      *
+!*         supervisory_diff_pay_error_flag is set to 'Y' otherwise 'N'.      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-supervisory-diff-pay
+
+    let #ps_supervisory_diff_amt  = to_number($ps_supervisory_diff_amt)
+    let #ps_supervisory_diff_amt  = #ps_supervisory_amt / 100
+    let #ips_supervisory_diff_amt = to_number($ips_supervisory_diff_amt)
+    let #ips_supervisory_diff_amt = #ips_supervisory_diff_amt / 100
+
+    if #ps_supervisory_diff_amt != #ips_supervisory_diff_amt
+        move 'Y'                            to $supervisory_diff_pay_error_flag
+    else
+        move 'N'                            to $supervisory_diff_pay_error_flag
+    end-if
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   edit-accounting-code                                                    *
+!*       - Compares ips accounting code to ps accounting code, if they are   *
+!*         not equal the accounting_code_error_flag is set to 'Y'            *
+!*         otherwise 'N'.                                                    *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure edit-accounting-code
+
+    if $ps_accounting_code != $ips_accounting_code
+        move 'Y'                            to $accounting_code_error_flag
+    else
+        move 'N'                            to $accounting_code_error_flag
+    end-if
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   check-error-flags                                                       *
+!*       - Checks for the error code setting, if any of the error code is    *
+!*         'Y', report printing procedure is called. New page is initiated   *
+!*         when POI changes.                                                 *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure check-error-flags
+!SHOW 'beginning check-error-flags procedure'              ! JMW 3/7/2000 added
+
+if $emp_name_error_flag                = 'Y'  or
+   $sex_error_flag                     = 'Y'  or
+   $dob_error_flag                     = 'Y'  or
+   $tenure_code_error_flag             = 'Y'  or
+   $scd_leave_error_flag               = 'Y'  or
+   $flsa_ind_error_flag                = 'Y'  or
+   $emp_basis_code_error_flag          = 'Y'  or
+   $status_cd_error_flag               = 'Y'  or
+   $retirement_cd_error_flag           = 'Y'  or
+   $dt_of_grade_e_error_flag           = 'Y'  or
+   $dt_of_last_inc_error_flag          = 'Y'  or
+   $accession_dt_error_flag            = 'Y'  or
+   $occp_series_error_flag             = 'Y'  or
+   $classification_title_error_flag    = 'Y'  or
+   $posn_occupied_error_flag           = 'Y'  or
+   $pay_plan_error_flag                = 'Y'  or
+   $grade_error_flag                   = 'Y'  or
+   $step_error_flag                    = 'Y'  or
+   $annual_sal_error_flag              = 'Y'  or
+   $hourly_sal_error_flag              = 'Y'  or
+   $per_diem_sal_error_flag            = 'Y'  or
+   $pay_basis_error_flag               = 'Y'  or
+   $fegli_code_error_flag              = 'Y'  or
+   $tour_hours_error_flag              = 'Y'  or
+   $lv_elig_pfc67_error_flag           = 'Y'  or
+   $lv_elig_flag_error_flag            = 'Y'  or
+   $lv_elig_ppwo_error_flag            = 'Y'  or
+   $lv_elig_wkschi_error_flag          = 'Y'  or
+   $org_error_flag                     = 'Y'  or
+   $geoloc_cd_error_flag               = 'Y'  or
+   $hb_error_flag                      = 'Y'  or
+   $hb_emp_amt_error_flag              = 'Y'  or
+   $hb_govt_amt_error_flag             = 'Y'  or
+   $pttime_prorate_error_flag          = 'Y'  or
+   $annuity_code_error_flag            = 'Y'  or
+   $rtmnt_annuity_sum_error_flag       = 'Y'  or
+   $scd_civ_error_flag                 = 'Y'  or
+   $rtnd_pp_error_flag                 = 'Y'  or
+   $rtnd_grade_error_flag              = 'Y'  or
+   $rtnd_step_error_flag               = 'Y'  or
+   $tot_sev_pay_error_flag             = 'Y'  or
+   $educ_level_error_flag              = 'Y'  or
+   $min_cd_error_flag                  = 'Y'  or
+   $perf_rtg_error_flag                = 'Y'  or
+   $supvry_cd_error_flag               = 'Y'  or
+   $vet_pref_error_flag                = 'Y'  or
+   $patco_cd_error_flag                = 'Y'  or
+   $tsp_stat_error_flag                = 'Y'  or
+   $tsp_stat_dt_error_flag             = 'Y'  or
+   $tsp_scd_error_flag                 = 'Y'  or
+   $tsp_emp_amt_error_flag             = 'Y'  or
+   $tsp_emp_rate_g_error_flag          = 'Y'  or
+   $tsp_emp_rate_f_error_flag          = 'Y'  or
+   $tsp_emp_rate_c_error_flag          = 'Y'  or
+   $amb_pay_amt_error_flag             = 'Y'  or
+   $total_salary_error_flag            = 'Y'  or
+   $ipa_salary_error_flag              = 'Y'  or
+   $pay_salary_flag_error_flag         = 'Y'  or
+   $locality_indicator_error_flag      = 'Y'  or
+   $locality_adjustment_error_flag     = 'Y'  or
+   $retention_allowance_error_flag     = 'Y'  or
+   $supervisory_diff_pay_error_flag    = 'Y'  or
+   $accounting_code_error_flag         = 'Y'
+
+    if $first_time_flag  = 'Y' or
+       $ps_gvt_poi      != $prev_poi
+
+        if $first_time_flag = 'Y'
+            SHOW 'first_time_flag = Y'         ! JMW 3/7/2000
+            move 'N'                        to $first_time_flag
+        else
+            do print-employee-error-count
+            move $report_file               to $old_report_file
+        end-if
+
+        ! 100 comment
+        #ifdef UNIX
+            let $report_file = {report_path} || substr($ps_gvt_poi,1,4)
+                                             || '/'
+                                             || {report_filename_a}
+                                             || substr($proc_instance,1,8)
+                                             || {report_filename_ext}
+        #endif
+
+        SHOW '100 UNIX report_file   '  $report_file      !JMW 3/7/2000 added
+
+        #ifdef NT
+            let $report_file = {report_path} || {report_filename_a}
+                                             || substr($ps_gvt_poi,1,4)
+                                             || '_'
+                                             || substr($proc_instance,1,8)
+                                             || {report_filename_ext}
+        #endif
+
+        let $emp_poi     = substr($ps_gvt_poi,1,4)
+        let $poireport   = $report_file
+        let $rep_title   = 'Peoplesoft -IPS Reconciliation Report'
+        do multiple-file
+
+        new-report $report_file
+        do print-all-report
+
+        move $ps_gvt_poi                    to $prev_poi
+        move $ps_gvt_poi                    to $poi_a
+        do get-poi-descr($ps_gvt_poi,$poi_a_descr)
+    end-if
+
+    do print-report-lhrsips5-a
+    add +1                                  to #error_count
+    let #records_with_error    = #records_with_error + 1
+else
+    let #records_with_no_error = #records_with_no_error + 1
+end-if
+
+SHOW 'ending check-error-flags procedure'                ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-poi-descr                                                           *
+!*       - Gets description of personel office identifier.                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-poi-descr($in_poi,
+                              :$out_descr)
+
+!SHOW 'beginning get-poi-descr procedure'                  ! JMW 3/7/2000 added
+
+begin-select
+a.descr                      &descr
+    move &descr                             to $out_descr
+from ps_gvt_poi_tbl a
+where a.gvt_poi     = $in_poi
+  and a.eff_status  = 'A'
+  and a.effdt       = (select max(b.effdt)
+                       from ps_gvt_poi_tbl  b
+                       where b.gvt_poi     = a.gvt_poi
+                         and b.eff_status  = a.eff_status
+                         and b.effdt      <= sysdate)
+end-select
+
+!SHOW 'in_poi ' $in_poi                                    ! JMW 3/7/2000 added
+!SHOW 'ending get-poi-descr procedure'                     ! JMW 3/7/2000 added
+
+end-procedure
+
+
+!*************  Begin Modification 09/18/01 JNA  PPR361  ******************
+begin-procedure get-salary-cap                           !j
+let $asofyear  = substr($asofdate, 8, 4)                 !j
+                                                         !j
+begin-select                                             !j
+pay.dl_pay_cap_amt &cap                                  !j
+  let #salary_cap = edit(&cap,'999999.99')               !j
+  show #salary_cap                                       !j
+from ps_dl_fy_pay_cap pay                                !j
+where pay.fiscal_year = $asofyear                        !j
+end-select                                               !j
+end-procedure
+!*************  End Modification 09/18/01 JNA  PPR361  ******************
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   print-report-lhrsips5-a                                                 *
+!*       - Prints report lhrsips5-A, based upon the error flag.              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure print-report-lhrsips5-a
+SHOW 'beginning print-report-lhrsips5-a procedure'        ! JMW 3/7/2000 added
+
+move 'N'                                    to $name-printed
+move $ps_name                               to $report-name
+move $ps_ssn                                to $report-ssn
+
+if $emp_name_error_flag = 'Y'
+    move 'EMP NAME                 '        to $report-data-item
+    move $ps_name                           to $report-ps-data
+    move $ips_empe_name                     to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $sex_error_flag = 'Y'
+    move 'SEX                      '        to $report-data-item
+    move $ps_sex                            to $report-ps-data
+    move $ips_empe_name_title               to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $dob_error_flag = 'Y'
+    move 'DOB                      '        to $report-data-item
+    move $ps_birthdate                      to $report-ps-data
+    move $ips_dob                           to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $tenure_code_error_flag = 'Y'
+    move 'TENURE CODE              '        to $report-data-item
+    move $ps_gvt_tenure                     to $report-ps-data
+    move $ips_tenure_code                   to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $scd_leave_error_flag = 'Y'
+    move 'SCD LEAVE                '        to $report-data-item
+    move $service_dt                        to $report-ps-data
+    move $ips_govt_serv_date                to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $flsa_ind_error_flag = 'Y'
+    move 'FLSA IND                 '        to $report-data-item
+    move $ps_dl_snap_flsa                   to $report-ps-data
+    move $ips_flsa_code                     to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $emp_basis_code_error_flag = 'Y'
+    move 'EMPT BASIS CODE          '        to $report-data-item
+    move $ps_empl_basis                     to $report-ps-data
+    move $ips_empt_basis_code               to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $status_cd_error_flag = 'Y'
+    move 'STATUS CODE              '        to $report-data-item
+    move $ps_empl_status                    to $report-ps-data
+    move $ips_empe_status_code              to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $retirement_cd_error_flag = 'Y'
+    move 'RETIREMENT CODE          '        to $report-data-item
+    move $ps_gvt_retire_plan                to $report-ps-data
+    move $ips_retirement_code               to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $dt_of_grade_e_error_flag = 'Y'
+    move 'DATE OF GRADE E          '        to $report-data-item
+    move $ps_grade_entry_dt                 to $report-ps-data
+    move $ips_grade_date                    to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $dt_of_last_inc_error_flag = 'Y'
+    move 'DT OF LAST INC           '        to $report-data-item
+    move $ps_gvt_dt_lei                     to $report-ps-data
+    move $ips_last_increase_date            to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $accession_dt_error_flag = 'Y'
+    move 'ACCESSION DATE           '        to $report-data-item
+    move $ps_hire_dt                        to $report-ps-data
+    move $ips_accession_date                to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $occp_series_error_flag = 'Y'
+    move 'OCCP SERIES              '        to $report-data-item
+    move $ps_gvt_occ_series                 to $report-ps-data
+    move $ips_occup_series                  to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $classification_title_error_flag = 'Y'
+    move 'CLASSIFICATION TITLE     '        to $report-data-item
+    move $ps_gvt_posn_title_cd              to $report-ps-data
+    move $ips_classification_title          to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $posn_occupied_error_flag = 'Y'
+    move 'POSITION OCCUPIED        '        to $report-data-item
+    move $ps_gvt_posn_occupied              to $report-ps-data
+    move $ips_position_occupied             to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $pay_plan_error_flag = 'Y'
+    move 'PAY PLAN                 '        to $report-data-item
+!   move $ps_ern_program                    to $report-ps-data       JMW 2/2/2000 comment out
+    move $ps_gvt_pay_plan                   to $report-ps-data      !JMW 2/2/2000 added
+    move $ips_pay_plan                      to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $grade_error_flag = 'Y'
+    move 'GRADE                    '        to $report-data-item
+    move $ps_grade                          to $report-ps-data
+    move $ips_pay_grade                     to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $step_error_flag = 'Y'
+    move 'STEP                     '        to $report-data-item
+    move $ps_step                           to $report-ps-data
+    move $ips_pay_step                      to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $annual_sal_error_flag = 'Y'
+    move 'ANNUAL SALARY            '        to $report-data-item
+    let $report-ps-data   = edit(#ps_adjusted_basic_pay,'999999.99')
+    let $report-ips-data  = edit(#ips_base_pay_hr_day_rate,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $hourly_sal_error_flag = 'Y'
+    move 'HOURLY SALARY            '        to $report-data-item
+    let $report-ps-data   = edit(#ps_adjusted_basic_pay,'999999.99')
+    let $report-ips-data  = edit(#ips_base_pay_annual_rate,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $per_diem_sal_error_flag = 'Y'
+    move 'PER DIEM SALARY          '        to $report-data-item
+    let $report-ps-data   = edit(#ps_adjusted_basic_pay,'999999.99')
+    let $report-ips-data  = edit(#ips_base_pay_hr_day_rate,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $pay_basis_error_flag = 'Y'
+    move 'PAY BASIS                '        to $report-data-item
+    move $ps_gvt_pay_basis                  to $report-ps-data
+    move $ips_pay_basis_code                to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $fegli_code_error_flag = 'Y'
+    move 'FEGLI CODE               '        to $report-data-item
+    move $ps_gvt_fegli                      to $report-ps-data
+    move $ips_fegli_code                    to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $tour_hours_error_flag = 'Y'
+    move 'TOUR HOURS               '        to $report-data-item
+    let $report-ps-data    = edit(#ps_std_hours,'999')
+    let $report-ips-data   = edit(#ips_part_time_tour_hrs,'999')
+
+    do print-detail-line
+end-if
+
+if $lv_elig_pfc67_error_flag = 'Y'
+    move 'LV ELIG WHEN PFC=67      '        to $report-data-item
+    move $ps_dl_special_emp_cd              to $report-ps-data
+    move $ips_leave_eligible_code           to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $lv_elig_flag_error_flag = 'Y'
+    move 'LV ELIG FLAG             '        to $report-data-item
+    move $ps_dl_leave_elig_cd               to $report-ps-data
+    move $ips_leave_eligible_code           to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $lv_elig_ppwo_error_flag = 'Y'
+    move 'LV ELIG WHEN PP=WO       '        to $report-data-item
+    move $ps_gvt_fegli                      to $report-ps-data
+    move $ips_leave_eligible_code           to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $lv_elig_wkschi_error_flag = 'Y'
+    move 'LV ELIG WHEN WKSCH=I     '        to $report-data-item
+    move $ps_dl_leave_elig_cd               to $report-ps-data
+    move $ips_leave_eligible_code           to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $org_error_flag = 'Y'
+    move 'ORG CODE                 '        to $report-data-item
+    move $ps_orgcode                        to $report-ps-data
+    move $ips_pers_org_code                 to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $geoloc_cd_error_flag = 'Y'
+    move 'GEOLOC CD                '        to $report-data-item
+    move $ps_gvt_geoloc_cd                  to $report-ps-data
+    move $ips_geographic_location           to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $hb_error_flag = 'Y'
+    move 'HB                       '        to $report-data-item
+    move $ps_benefit_plan                   to $report-ps-data
+    move $ips_fehb_code                     to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $hb_emp_amt_error_flag = 'Y'
+    move 'HB-EMP-AMT               '        to $report-data-item
+    let $report-ps-data   = edit(#ps_empl_covrg_rate,'999999.99')
+    let $report-ips-data  = edit(#ips_fehb_empshr_ded_amt,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $hb_govt_amt_error_flag = 'Y'
+    move 'HB-GOVT-AMT              '        to $report-data-item
+    let $report-ps-data   = edit(#ps_emplr_covrg_rate,'999999.99')
+    let $report-ips-data  = edit(#ips_fehb_agyshr_ded_amt,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $pttime_prorate_error_flag = 'Y'
+    move 'PTTIME PRO RATE          '        to $report-data-item
+    move $ps_dl_fehb_pt_prorate             to $report-ps-data
+    move $ips_fehb_part_time_prorate        to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $annuity_code_error_flag = 'Y'
+    move 'ANNUITY CODE             '        to $report-data-item
+    move $ps_gvt_ann_ind                    to $report-ps-data
+    move $ips_annuitant_code                to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $rtmnt_annuity_sum_error_flag = 'Y'
+    move 'RTMNT ANNUITY SUM        '        to $report-data-item
+    let $report-ps-data   = edit(#ps_gvt_annuity_offset,'999999')
+    let $report-ips-data  = edit(#ips_annuity_amt,'999999')
+
+    do print-detail-line
+end-if
+
+if $scd_civ_error_flag = 'Y'
+    move 'SCD CIV                  '        to $report-data-item
+    move $ps_gvt_scd_retire                 to $report-ps-data
+    move $ips_retire_govt_service_date      to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $rtnd_pp_error_flag = 'Y'
+    move 'RTND PP                  '        to $report-data-item
+!   move $ps_gvt_rtnd_ern_prgm              to $report-ps-data     JMW 2/2/2000 commment out
+    move $ps_gvt_rtnd_pay_plan              to $report-ps-data    !JMW 2/2/2000 added
+    move $ips_retained_pay_plan             to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $rtnd_grade_error_flag = 'Y'
+    move 'RTND GRADE               '        to $report-data-item
+    move $ps_gvt_rtnd_grade                 to $report-ps-data
+    move $ips_retained_pay_grade            to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $rtnd_step_error_flag = 'Y'
+    move 'RTND STEP                '        to $report-data-item
+    let $report-ps-data  = edit(#ps_gvt_rtnd_step,'9999')
+    let $report-ips-data = edit(#ips_retained_pay_step,'9999')
+
+    do print-detail-line
+end-if
+
+if $tot_sev_pay_error_flag = 'Y'
+    move 'TOT SEV PAY              '        to $report-data-item
+    let $report-ps-data  = edit(#ps_dl_sev_pay_tot,'999999')
+    let $report-ips-data = edit(#ips_severance_pay_bal,'999999')
+
+    do print-detail-line
+end-if
+
+if $educ_level_error_flag = 'Y'
+    move 'EDUC LEVEL               '        to $report-data-item
+    move $ps_accomplishment                 to $report-ps-data
+    move $ips_educational_attainment        to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $min_cd_error_flag = 'Y'
+    move 'MIN CD                   '        to $report-data-item
+    move $ps_ethnic_group                   to $report-ps-data
+    move $ips_minority_grp_code             to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $perf_rtg_error_flag = 'Y'
+    move 'PERFORMANCE RATING       '        to $report-data-item
+    move $ps_review_rating                  to $report-ps-data
+    move $ips_performance_rating            to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $supvry_cd_error_flag = 'Y'
+    move 'SUPVRY CD                '        to $report-data-item
+    move $ps_manager_level                  to $report-ps-data
+    move $ips_supervisory_code              to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $vet_pref_error_flag = 'Y'
+    move 'VETERANCE PREFERENCE     '        to $report-data-item
+    move $ps_gvt_vet_pref_appt              to $report-ps-data
+    move $ips_veterans_preference           to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $patco_cd_error_flag = 'Y'
+    move 'PATCO CODE               '        to $report-data-item
+    move $ps_patcob_cd                      to $report-ps-data
+    move $ips_patco_code                    to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $tsp_stat_error_flag = 'Y'
+    move 'TSP STAT                 '        to $report-data-item
+    move $ps_coverage_elect                 to $report-ps-data
+    move $ips_tsp_status_code               to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $tsp_stat_dt_error_flag = 'Y'
+    move 'TSP STAT DATE            '        to $report-data-item
+    move $ps_coverage_begin_dt              to $report-ps-data
+    move $ips_tsp_status_date               to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $tsp_scd_error_flag = 'Y'
+    move 'TSP SCD                  '        to $report-data-item
+    move $ps_gvt_scd_tsp                    to $report-ps-data
+    move $ips_tsp_service_compute_date      to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $tsp_emp_amt_error_flag = 'Y'
+    move 'TSP EMP AMT              '        to $report-data-item
+    let $report-ps-data   = edit(#ps_flat_ded_amt,'999999.99')
+    let $report-ips-data  = edit(#ips_tsp_empe_amt,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $tsp_emp_rate_g_error_flag = 'Y'
+    move 'TSP EMP RATE G           '        to $report-data-item
+    let $report-ps-data  = edit(#ps_investment_pct_g,'999999.99')
+    let $report-ips-data = edit(#ips_tsp_empl_dist_amt_g,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $tsp_emp_rate_f_error_flag = 'Y'
+    move 'TSP EMP RATE F           '        to $report-data-item
+    let $report-ps-data  = edit(#ps_investment_pct_f,'999999.99')
+    let $report-ips-data = edit(#ips_tsp_empl_dist_amt_f,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $tsp_emp_rate_c_error_flag = 'Y'
+    move 'TSP EMP RATE C           '        to $report-data-item
+    let $report-ps-data  = edit(#ps_investment_pct_c,'999999.99')
+    let $report-ips-data = edit(#ips_tsp_empl_dist_amt_c,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $amb_pay_amt_error_flag = 'Y'
+    move 'AMB PAY AMT              '        to $report-data-item
+    let $report-ps-data  = edit(#ps_dl_ambasdor_salary,'99999999')
+    let $report-ips-data = edit(#ips_ambassador_salary,'99999999')
+
+    do print-detail-line
+end-if
+
+if $total_salary_error_flag = 'Y'
+    move 'TOTAL SALARY             '        to $report-data-item
+    let $report-ps-data  = edit(#ps_total_salary,'999999.99')
+    let $report-ips-data = edit(#ips_total_salary,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $ipa_salary_error_flag = 'Y'
+    move 'IPA SALARY               '        to $report-data-item
+    let $report-ps-data  = edit(#ps_dl_ipa_salary_amt,'999999.99')
+    let $report-ips-data = edit(#ips_ipa_salary,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $pay_salary_flag_error_flag = 'Y'
+    move 'PAY SALARY FLAG          '        to $report-data-item
+    let $report-ps-data  = edit(#ps_availability_pay,'999999.99')
+    let $report-ips-data = edit(#ips_auo_amt,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $locality_indicator_error_flag = 'Y'
+    move 'LOCALITY INDICATOR       '        to $report-data-item
+    move $ps_locality_ind                   to $report-ps-data
+    move $ips_locality_pay_ind              to $report-ips-data
+
+    do print-detail-line
+end-if
+
+if $locality_adjustment_error_flag = 'Y'
+    move 'LOCALITY ADJUSTMENT      '        to $report-data-item
+    let $report-ps-data   = edit(#ps_gvt_locality_adj,'999999.99')
+    let $report-ips-data  = edit(#ips_locality_pay_amt,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $retention_allowance_error_flag = 'Y'
+    move 'RETENTION ALLOWANCE      '        to $report-data-item
+    let $report-ps-data   = edit(#ps_retention_allowance_amt,'999999.99')
+    let $report-ips-data  = edit(#ips_retention_allowance_amt,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $supervisory_diff_pay_error_flag = 'Y'
+    move 'SUPERVISORY DIFF PAY     '        to $report-data-item
+    let $report-ps-data   = edit(#ps_supervisory_diff_amt,'999999.99')
+    let $report-ips-data  = edit(#ips_supervisory_diff_amt,'999999.99')
+
+    do print-detail-line
+end-if
+
+if $accounting_code_error_flag = 'Y'
+    move 'ACCOUNTING CODE           '       to $report-data-item
+    let $report-ps-data   = $ps_accounting_code
+    let $report-ips-data  = $ips_accounting_code
+
+    do print-detail-line
+end-if
+
+SHOW 'ending print-report-lhrsips5-a procedure'           ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   print-detail-line                                                       *
+!*       - Prints a line for report lhrsips5-A.                              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure print-detail-line
+SHOW 'beginning print-detail-line procedure'              ! JMW 3/7/2000 added
+
+if $name-printed = 'N'
+    print  $report-name                 (+2,1,25)
+    print  $report-ssn                  (0,+2,9)
+    print  $report-data-item            (0,+2,25)
+    print  $report-ps-data              (0,+2,25)
+    print  '.'                          (0,+2)
+    print  $report-ips-data             (0,+2,25)
+
+    move 'Y'                            to $name-printed
+else
+    print  $report-data-item            (+1,39,25)
+    print  $report-ps-data              (0,+2,25)
+    print  '.'                          (0,+2)
+    print  $report-ips-data             (0,+2,25)
+end-if
+
+SHOW 'ending print-detail-line procedure'                 ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   print-employee-error-count                                              *
+!*       - Prints Employee error total.                                      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure print-employee-error-count
+SHOW 'beginning print-employee-error-count procedure'     ! JMW 3/7/2000 added
+
+print 'TOTAL EMPLOYEES WITH ERRORS : ' (+2,1)
+SHOW 'total employees with errors --> ' #error_count      ! JMW 3/7/2000 added
+
+print #error_count                     ()   edit B999
+move 0                                      to #error_count
+
+SHOW 'ending print-employee-error-count procedure'        ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   print-all-report                                                        *
+!*       - Prints a consolidated report for UNIX platform.                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure print-all-report
+SHOW 'beginning print-all-report procedure'               ! JMW 3/7/2000 added
+
+#ifdef UNIX
+    if $old_report_file != ' '
+        if $report_name = 'lhrsips5-A'
+            let $print_command = 'cat '  || $old_report_file
+                                         || ' >> '
+                                         || $report_a_all
+        else
+            let $print_command = 'cat '  || $old_report_file
+                                         || ' >> '
+                                         || $report_b_all
+        end-if
+
+        call system using $print_command #unix_status
+
+        if #unix_status != 0
+            display 'error while writing data to consolidated report files'
+            display 'Status :' noline
+            display #unix_status
+        end-if
+    end-if
+#end-if
+
+SHOW 'ending print-all-report procedure'                  ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   print-report-lhrsips5-b                                                 *
+!*       - Prints report lhrsips5-B.                                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure print-report-lhrsips5-b
+SHOW 'beginning print-report-lhrsips5-b procedure'        ! JMW 3/7/2000 added
+
+move 'lhrsips5-B'                           to $report_name
+move 'N'                                    to $end_of_report
+move ' '                                    to $prev_poi
+move 0                                      to #missing_count
+move ' '                                    to $prev_missing_flag
+move ' '                                    to $old_report_file
+move 'Y'                                    to $first_time_flag
+
+SHOW 'beginning select of DL_RECONCIL_TBL'                   ! JMW 3/7/2000 added
+begin-select
+gvt_poi                                     &a_gvt_poi
+deptid                                      &a_deptid
+name                                        &a_name
+dl_missing_flag                             &a_missing_flag
+!ssn                                        &a_ssn           !JMW 2/2/2000 comment out
+national_id                                 &a_national_id   !JMW 2/2/2000 added
+   Let $national_id = RTRIM(&a_national_id,' ')              !JMW 3/7/2000 added
+
+  display '$first_time_flag ' noline
+  display  $first_time_flag
+  display '&a_national_id ' noline
+  display  &a_national_id
+  display '&a_gvt_poi ' noline
+  display  &a_gvt_poi
+  display ' '
+
+    if $first_time_flag  = 'Y'  or
+       &a_gvt_poi       != $prev_poi
+   SHOW 'inside first time loop'
+       if $first_time_flag = 'Y'
+            move 'N'                        to $first_time_flag
+        else
+            do missing-total
+            move $report_file               to $old_report_file
+        end-if
+
+        ! 200 comment
+        #ifdef UNIX
+            let $report_file = {report_path} || substr(&a_gvt_poi,1,4)
+                                             || '/'
+                                             || {report_filename_b}
+                                             || substr($proc_instance,1,8)
+                                             || {report_filename_ext}
+        #endif
+
+        SHOW '200 UNIX report_file = '  $report_file       ! JMW 3/7/2000 added
+
+        #ifdef NT
+            let $report_file = {report_path} || {report_filename_b}
+                                             || substr(&a_gvt_poi,1,4)
+                                             || '_'
+                                             || substr($proc_instance,1,8)
+                                             || {report_filename_ext}
+        #endif
+
+        let $emp_poi     = substr(&a_gvt_poi,1,4)
+        let $poireport   = $report_file
+        let $rep_title   = 'Reconciliation - List of Unmatched Records'
+
+        SHOW 'emp_poi   = ' $emp_poi            ! JMW 3/7/2000 added
+        SHOW 'poireport = ' $poireport          ! JMW 3/7/2000 added
+        SHOW 'rep_title = ' $rep_title          ! JMW 3/7/2000 added
+
+        SHOW 'just before do multiple-file'   ! JMW 3/7/2000 added
+        do multiple-file
+        SHOW 'just after do multiple-file'    ! JMW 3/7/2000 added
+
+        new-report $report_file
+
+        SHOW 'just before print-all-report'   ! JMW 3/7/2000 added
+        do print-all-report
+        SHOW 'just after print-all-report'    ! JMW 3/7/2000 added
+
+        move &a_gvt_poi                     to $prev_poi
+        move &a_gvt_poi                     to $poi_b
+        do get-poi-descr(&a_gvt_poi,$poi_b_descr)
+        move &a_missing_flag                to $prev_missing_flag
+        do missing-banner
+    end-if
+
+    if &a_missing_flag != $prev_missing_flag
+           SHOW 'just before do missing-total'     ! JMW 3/7/2000 added
+        do missing-total
+           SHOW 'just after do missing-total'      ! JMW 3/7/2000 added
+           SHOW 'just before do missing-banner'    ! JMW 3/7/2000 added
+        do missing-banner
+           SHOW 'just before do missing-banner'    ! JMW 3/7/2000 added
+
+        move &a_missing_flag                to $prev_missing_flag
+    end-if
+
+    print &a_deptid       (+1,1,10)      edit XXXXXXXXXX
+!   print &a_ssn          (0,+9,9)       edit XXXXXXXXX       !JMW 2/2/2000 comment out
+    print $national_id    (0,+9,9)       edit XXXXXXXXX       !JMW 2/2/2000 added
+    print &a_name         (0,+2,25)      edit XXXXXXXXXXXXXXXXXXXXXXXXX
+
+    add +1                                  to #missing_count
+
+from PS_DL_RECONCIL_TBL
+!where gvt_poi <> '  '         !added GMD 06/14/2000
+order by gvt_poi,
+         dl_missing_flag,
+         deptid
+end-select
+SHOW 'ending select of DL_RECONCIL_TBL'                       ! JMW 3/7/2000 added
+
+    if $first_time_flag = 'Y'
+        let $report_file = $report_b_all
+
+        new-report $report_file
+        print {no-data-to-print}        ()
+    else
+        do missing-total
+    end-if
+
+    print '*******  END OF REPORT  ******'  (+2)      center
+
+    let $dummy_file = {report_path} || 'temp'
+    new-report $dummy_file
+
+    #ifdef UNIX
+        if $first_time_flag != 'Y'
+            move $report_file               to $old_report_file
+            do print-all-report
+        end-if
+    #end-if
+
+SHOW 'ending print-report-lhrsips5-b procedure'          ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   missing-total                                                           *
+!*       - Prints missing total.                                             *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure missing-total
+SHOW 'beginning missing-total procedure'                  ! JMW 3/7/2000 added
+
+print 'Total : '      (+2,1)
+print #missing_count  (0,0,5)     edit      B9999
+print ' '             (+1)
+
+move 0                                      to #missing_count
+
+SHOW 'ending missing-total procedure'                     ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   missing-banner                                                          *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure missing-banner
+SHOW 'beginning missing-banner procedure'                 ! JMW 3/7/2000 added
+
+if &a_missing_flag = '2'
+    print 'RECORDS IN PEOPLESOFT AND NOT ON IPS DATABASE :' (+1,1)
+    print ' '                                               (+1)
+else
+    print 'RECORDS IN IPS AND NOT ON PEOPLESOFT DATABASE :' (+1,1)
+    print ' '                                               (+1)
+end-if
+
+SHOW 'ending missing-banner procedure'                   ! JMW 3/7/2000 added
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Terminate-Report                                                        *
+!*       - Closes all the files.                                             *
+!*       - Displays all the control variables.                               *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Terminate-Report
+SHOW 'beginning terminate-report procedure'               ! JMW 3/7/2000 added
+
+    if $system_error = 'N'
+        close 1
+        close 2
+    end-if
+
+    do closefile
+
+    display '********************************************************'
+    display '* Total No. of records read from PS file       : ' noline
+    display #records_read_ps        99999 noline
+    display ' *'
+    display '* Total No. of records read from IPS file      : ' noline
+    display #records_read_ips       99999 noline
+    display ' *'
+    display '* No. of records present in PS and not in IPS  : ' noline
+    display #records_in_ips_missing 99999 noline
+    display ' *'
+    display '* No. of records present in IPS and not in PS  : ' noline
+    display #records_in_ps_missing  99999 noline
+    display ' *'
+    display '* Total No. of matching records without errors : ' noline
+    display #records_with_no_error  99999 noline
+    display ' *'
+    display '* Total No. of matching records with errors    : ' noline
+    display #records_with_error     99999 noline
+    display ' *'
+    display '********************************************************'
+
+    do commit-transaction
+    do Stdapi-Term
+
+SHOW 'ending terminate-report procedure'                  ! JMW 3/7/2000 added
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   print-report                                                            *
+!*       - Prints the report if the platform UNIX.                           *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure print-report
+SHOW 'beginning print-report procedure'                   ! JMW 3/7/2000 added
+
+    #ifdef UNIX
+        let $print_command = 'lp '  || $report_a_all
+
+        call system using $print_command #unix_status
+
+        if #unix_status != 0
+            display '***************************************************'
+            display '* Error while printing report lhrsips5a_NNNN.lis  *'
+            display '* Terminating program with return code of 1300.   *'
+            display '* Contact Systems Engineer on call to resolve the *'
+            display '* issue.                                          *'
+            display '***************************************************'
+
+            move 'Y'                        to $system_error
+            move 1300                       to #prcs_rc
+            move 1300                       to #prcs_message_nbr
+            move {error-message}            to $prcs_message_parm1
+            move #prcs_run_status_error     to #prcs_run_status
+        end-if
+
+        let $print_command = 'lp '  || $report_b_all
+
+        call system using $print_command #unix_status
+
+        if #unix_status != 0
+            display '***************************************************'
+            display '* Error while printing report lhrsips5b_NNNN.lis  *'
+            display '* Terminating program with return code of 1300.   *'
+            display '* Contact Systems Engineer on call to resolve the *'
+            display '* issue.                                          *'
+            display '***************************************************'
+
+            move 'Y'                        to $system_error
+            move 1300                       to #prcs_rc
+            move 1300                       to #prcs_message_nbr
+            move {error-message}            to $prcs_message_parm1
+            move #prcs_run_status_error     to #prcs_run_status
+        end-if
+    #end-if
+
+SHOW 'ending print-report procedure'                     ! JMW 3/7/2000 added
+end-procedure
+
+
+#Include 'curdttim.sqc'  !Get-Current-DateTime procedure
+#Include 'datetime.sqc'  !Routines for date and time formatting
+#Include 'number.sqc'    !Routines to format numbers
+#Include 'stdapi.sqc'    !Update Process API

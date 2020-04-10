@@ -1,0 +1,1415 @@
+!*****************************************************************************
+!*                                                                           *
+!*    1.  Program Name    : LHRSIPS4                                         *
+!*                                                                           *
+!*    2.  Program Desc.   : This program is the first program in IPS-PS      *
+!*                          reconcilation process suite. This program        *
+!*                          extracts data for each employee from the         *
+!*                          peoplesoft system which needs to be reconciled   *
+!*                          against IPS database and writes it to a flat     *
+!*                          file. Which later would be used by LHRSIPS5      *
+!*                          program for reconciliation.                      *
+!*                                                                           *
+!*    3.  Author          : Manish Gupta                                     *
+!*                                                                           *
+!*    4.  Date Written    : 10/02/1998                                       *
+!*                                                                           *
+!*    5.  Files Used                                                         *
+!*           5.1  I/P     : None                                             *
+!*           5.2  O/P     : PS file    : Contains Peoplsoft employee data    *
+!*                                       filename - lhrsips4_ps_NNNN.dat     *
+!*                                       NNNN - Process Instance             *
+!*           5.3  I/O     : None                                             *
+!*           5.4  Reports : None                                             *
+!*                                                                           *
+!*    6.  Tables Used                                                        *
+!*           6.1  I/P     : PS_GVT_PERS_DATA                                 *
+!*                          PS_GVT_PERS_NID     JMW 1/28/2000  added         *
+!*                          PS_GVT_EMPLOYMENT                                *
+!*                          PS_GVT_JOB                                       *
+!*                          PS_GVT_JOBERNS                                   *
+!*                          PS_HEALTH_BENEFIT                                *
+!*                          PS_DL_IPS_INTERFAC                               *
+!*                          PS_DL_REVERSE_TBL                                *
+!*                          PS_ACCOMPLISHMENTS                               *
+!*                          PS_SAVINGS_PLAN                                  *
+!*                          PS_GVT_TSP_INV_DTA                               *
+!*                          PS_GVT_SAVINGS_INVEST                            *
+!*                          PS_EMPLOYEE_REVIEW                               *
+!*                          PS_JOBCODE_TBL                                   *
+!*                          PS_LOCATION_TBL                                  *
+!*                          PS_FLAT_RATE_TBL                                 *
+!*                          PS_ACCOMP_TBL                                    *
+!*                          PS_EARNINGS_TBL                                  *
+!*                          PS_POSITION_DATA                                 *
+!*           6.2  O/P     : None                                             *
+!*           6.3  I/O     : None                                             *
+!*                                                                           *
+!*    7.  SQC's Used      : none                                             *
+!*                                                                           *
+!*    8.  Return Code                                                        *
+!*           8.1  Success : 0                                                *
+!*           8.1  Error   : 1000  : Peoplesoft file open error.              *
+!*                          1100  : Error while copying file.                *
+!*                                                                           *
+!*****************************************************************************
+!*                         MODIFICATION LOG                                  *
+!*                         ----------------                                  *
+!*                                                                           *
+!* Date     INI  CR #       Description                                      *
+!* ----     ---  ----       -----------                                      *
+!* 10/02/98 MLG  I-16       - New program.                                   *
+!* 04/02/99 MLG  0005       - Modified program so that it accepts input      *
+!*                            param as of date.                              *
+!* 01/28/00 John Williford  - All changes identified below were done to      *
+!*                            support the PS 7.56 upgrade                    *
+!                           1.Replaced all code pertaining to ERN_PROGRAM    *
+!                             with GVT_PAY_PLAN on the PS_GVT_JOB table      *
+!                           2.Replaced all code pertaining to                *
+!                             GVT_RTND_ERN_PRGM with GVT_RTND_PAY_PLAN on the*
+!                             PS_GVT_JOB table                               *
+!                           3.Replaced all code pertaining to ERN_PROGRAM    *
+!                             with SETID on the PS_SAL_STEP_TBL table        *
+!                           4.Commented out selection of SSN on              *
+!                             ps_gvt_pers_data and replaced with selection   *
+!                             of National_ID on ps_gvt_pers_nid table        *
+!                           5.All changes are commented with JMW 1/28/2000   *
+! 03/28/00 John Williford   1.!show statements added to help with debugging  *
+! 04/19/00 John Williford   1.Added statements on benefit_plan and covrg_cd  *
+!                             to replace blank values with zeros.            *
+! 05/09/00 Glenn Daniels 1. Re-worked logic for TSP Stat dates and invest-   *
+!                           ment election percentages.                       *
+!                           Replaced PS_GVT_PERS_NID with PS_PERS_NID to     *
+!                           eliminate records with no SSN in PS flat file.   *
+!                           Re-worked logic to derive total salary for annual*
+!                           daily and hourly employees.                      *
+!                        2. Changed logic that evaluates employee status.    *
+! 06/12/00 Glenn Daniels 1. Expanded FEGLI code to 2 Char. and added the     *
+!                           22 Char. accounting code field formated to match *
+!                           IPS. Expanded file length to 357                 *
+! 08/02/00 Glenn Daniels 1. Select only rows with GVT_WIP_STATUS in 'HR' and *
+!                           'COR' in PS_GVT_JOB                              *
+!                        2. Select PS_GVT_JOB.GVT_WRK_SCHED for EMPT BASIS   *
+!                           CODE instead of PS_GVT_JOB.FULL_PART_TIME        *
+!                        3. IF and employee has a row in PS_HEALTH_BENEFITS  *
+!                           check PS_JOB.GVT_ELIG_FEHB and check for a value *
+!                           of 'NE' if found set benefits = 0                *
+! 08/23/00 Glenn Daniels 1. Select max row for each employee with a status   *
+!                           of 'HR' or 'COR'                                 *
+! 09/05/00 Glenn Daniels 1. Select only EMPL_STATUS of A, L, S, and P from   *
+!                           PS_JOB                                           *
+! 09/11/00 Glenn Daniels 1. Add check for ACTION_DT in main select           *
+!                        2. Removed conflicting sub-selects for              *
+!                           EFFDT and EFFSEQ, left sub-select only on        *
+!                           PS_GVT_JOB                                       *
+! 10/31/00 Glenn Daniels 1. Correct substring that retrieves the last digit  *
+!                           from the fiscal_year variable.  Changed from     *
+!                          substr(fiscal_year,3,1) to substr(fiscal_year,4,1)*
+! 10/31/00 Glenn Daniels 1. Increase edits to allow 8 digit process instance *
+! 09/18/01 JNA  PPR361      Remove TSP investment distributions, modifying   *
+!                           Locality Indicator, formatting severance pay     *
+!                           total, and pull salary cap from config table     *
+! 10/23/01 JNA  PPR367      removed action_dt criteria from max effdt, max   *
+!                           effseq SQL in main loop (action_dt <= $asofdate) *
+!*****************************************************************************
+#Include 'setenv.sqc'         !Set environment
+#Include 'setup02.sqc'        !printer
+#Include 'dlfpath.sqc'        !Common path definition for reports and files.
+
+#define ps_filename                    'lhrsips4_'
+#define ps_filename_out                'lhrsips5_ps'
+#define data_filename_ext              '.dat'
+#define error-message                  'ERROR : SEE SQR.LOG FOR DETAIL'
+#define retention_allowance_erncd      'RET%'
+#define supervisory_diff_erncd         'U%'
+#define availability_pay_erncd_flag    'AVL%'
+#define availability_pay_erncd         'AVL'
+#define investment_opt_g               'G'
+#define investment_opt_f               'F'
+#define investment_opt_c               'C'
+#define coverage_elect_terminate       'T'
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-program                                                           *
+!*       - Calls routines to initialize variables and open files.            *
+!*       - Calls routine which creates PS extract.                           *
+!*       - Calls routine which terminates the program.                       *
+!*                                                                           *
+!*****************************************************************************
+begin-program
+
+    !show 'before init-program in begin-program procedure'              !JMW 3/28/2000
+    do Init-program
+    !show 'after init-program in begin-program procedure'               !JMW 3/28/2000
+
+    if $system_error = 'N'
+        !show 'before process-program in begin-program procedure'       !JMW 3/28/2000
+        do process-program
+        !show 'after process-program in begin-program procedure'        !JMW 3/28/2000
+    end-if
+
+    !show 'before terminate-program in begin-program procedure'         !JMW 3/28/2000
+    do Terminate-program
+
+end-program
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Init-program                                                            *
+!*       - Calls routine which initializes date and time.                    *
+!*       - Calls routine which intializes number routines.                   *
+!*       - Calls routine which gets current date and time.                   *
+!*       - Calls routine which opens files.                                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Init-program
+
+    !show 'just started init-program procedure'                   !JMW 3/28/2000
+    move 'N'                                to $system_error
+
+    do Init-DateTime
+    do Stdapi-Init
+    do Init-Number
+    do get-current-datetime
+
+    if $prcs_process_instance = ''
+        input $asofdate        'Enter asofdate '
+    else
+        do get-run-cntl-parameters
+        show ' here is asofdate *'   $asofdate '*'
+    end-if
+
+    let $proc_instance          = edit(#prcs_process_instance,'09999999')
+
+    let $outfile_ps             = {outfile_path}     || {ps_filename}
+                                                     || substr($proc_instance,1,8)
+                                                     || {data_filename_ext}
+
+    let $outfile_next           = {infile_path}      || {ps_filename_out}
+                                                     || {data_filename_ext}
+
+     !show 'outfile_ps   = ' $outfile_ps                          ! JMW 3/28/2000
+     !show 'outfile_next = ' $outfile_next                        ! JMW 3/28/2000
+    !show 'going to open-ps-file from init-program procedure'    ! JMW 3/28/2000
+
+    do open-ps-file
+
+    !show 'coming back from open-ps-file to init-program procedure'    ! JMW 3/28/2000
+    !show 'just ending init-program procedure'                         ! JMW 3/28/2000
+
+    do get-salary-cap     !j 09/18/01 JNA  PPR361
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-run-cntl-parameters                                                 *
+!*       - Extracts run control parameters from run control parameters       *
+!*         table.                                                            *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-run-cntl-parameters
+
+    !show 'just started get-run-cntl-parameters procedure'               !JMW 3/28/2000
+
+begin-select
+runcntl.asofdate            &b_asofdate
+
+    move &b_asofdate                        to $asofdate
+
+from ps_dl_hrsips5      runcntl
+where runcntl.oprid          = $prcs_oprid
+  and runcntl.run_cntl_id    = $prcs_run_cntl_id
+end-select
+
+    !show 'just ending get-run-cntl-parameters procedure'               !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   open-ps-file                                                            *
+!*       - Opens peoplesoft file in write mode, if file status is other than *
+!*         zero display error message and abort the program.                 *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure open-ps-file
+    !show 'just started open-ps-file procedure'                       !JMW 3/28/2000
+
+    move 'N'                                to $system_error
+
+    let $file_name  = $outfile_ps
+
+    !show 'file_name in open-ps-file procedure' $file_name            !JMW 3/28/2000
+    open $file_name as 1 for-writing  record=357:fixed
+        status=#filestat
+    !show 'file_name opened successfully in open-ps-file procedure'   !JMW 3/28/2000
+
+    if #filestat != 0
+        display '***************************************************'
+        display '* Error while opening Peoplesoft file.            *'
+        display    $file_name                                        !JMW 3/28/2000
+        display '* Terminating program with return code of 1000.   *'
+        display '* Contact Systems Engineer on call to resolve the *'
+        display '* issue.                                          *'
+        display '***************************************************'
+
+        move 'Y'                            to $system_error
+        move 1000                           to #prcs_rc
+        move 1000                           to #prcs_message_nbr
+        move {error-message}                to $prcs_message_parm1
+        move #prcs_run_status_error         to #prcs_run_status
+    end-if
+
+    !show 'just ending open-ps-file procedure'                   !JMW 3/28/2000
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Process-program                                                         *
+!*       - Calls routine which extracts multiplication factor for            *
+!*         availability pay.                                                 *
+!*       - Extracts data for each employee from PS_GVT_PERS_DATA, PS_GVT_JOB,*
+!*         PS_GVT_EMPLOYMENT table sorted on POI and SSN of employee.        *
+!*       - Calls routine which extracts data from other tables for each      *
+!*         employee.                                                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Process-program
+    !show 'just started process-program procedure'                   !JMW 3/28/2000
+    !show 'getting ready to go to get-data-ps-earnings-tbl'          !JMW 3/28/2000
+    do get-data-ps-earnings-tbl
+    !show 'just got back from get-data-ps-earnings-tbl'              !JMW 3/28/2000
+    do get-acct-cd-data
+
+    let #count = 0
+    do get-time
+    SHOW ' Entered main select subroutine at - ' &time
+
+
+begin-select
+a.emplid                                    &emplid
+a.name                                      &name
+a.sex                                       &sex
+to_char(a.birthdate,'YYYYMMDD')             &birthdate
+nid.national_id                             &nid.national_id       !JMW 1/28/2000
+a.gvt_vet_pref_appt                         &gvt_vet_pref_appt
+a.ethnic_group                              &ethnic_group
+a.dl_tsp_election                           &dl_tsp_election
+to_char(a.dl_tsp_status_dt,'YYYYMMDD')      &dl_tsp_status_dt
+to_char(a.dl_tsp_status_dt,'YYYYMMDD')      &pers_tsp_status_dt
+b.emplid                                                         !j PPR361
+b.effdt                                                          !j PPR361
+b.effseq                                                         !j PPR361
+b.acct_cd                                   &acct_cd
+b.deptid                                    &deptid
+b.jobcode                                   &jobcode
+b.position_nbr                              &position_nbr
+b.gvt_noa_code                              &gvt_noa_code
+b.location                                  &location
+b.gvt_work_sched                             &gvt_wrk_sched
+b.empl_type                                 &empl_type
+b.empl_status                               &empl_status
+b.std_hours                                 &std_hours
+b.gvt_pay_rate_deter                        &gvt_pay_rate_deter
+b.gvt_pay_plan                              &gvt_pay_plan       !JMW 1/28/2000 added
+b.sal_admin_plan                            &sal_admin_plan
+b.grade                                     &grade
+to_char(b.grade_entry_dt,'YYYYMMDD')        &grade_entry_dt
+b.step                                      &step
+!b.gvt_rtnd_ern_prgm                        &gvt_rtnd_ern_prgm    JMW 1/28/2000 comment out
+b.gvt_rtnd_pay_plan                         &gvt_rtnd_pay_plan   !JMW 1/28/2000 added
+b.gvt_hrly_rt_no_loc                        &gvt_hrly_rt_no_loc  !GMD 5/8/2000 added
+b.gvt_rtnd_grade                            &gvt_rtnd_grade
+b.gvt_rtnd_step                             &gvt_rtnd_step
+b.gvt_pay_basis                             &gvt_pay_basis
+b.gvt_comprate                              &gvt_comprate
+b.gvt_locality_adj                          &gvt_locality_adj
+b.annl_benef_base_rt                        &annl_benef_base_rt
+b.flsa_status                               &flsa_status
+b.gvt_retire_plan                           &gvt_retire_plan
+b.gvt_ann_ind                               &gvt_ann_ind
+b.gvt_fegli                                 &gvt_fegli
+b.gvt_annuity_offset                        &gvt_annuity_offset
+b.gvt_poi                                   &gvt_poi
+b.gvt_posn_occupied                         &gvt_posn_occupied
+b.benefit_program                           &benefit_program
+to_char(g.hire_dt,'YYYYMMDD')               &hire_dt
+to_char(g.service_dt,'YYYYMMDD')            &service_dt
+to_char(g.gvt_scd_retire,'YYYYMMDD')        &gvt_scd_retire
+to_char(g.gvt_scd_tsp,'YYYYMMDD')           &gvt_scd_tsp
+to_char(g.gvt_dt_lei,'YYYYMMDD')            &gvt_dt_lei
+g.gvt_tenure                                &gvt_tenure
+b.gvt_elig_fehb                             &gvt_elig_fehb
+
+    let #count = #count + 1
+    do get-time
+   SHOW '**************** Next employee **************** '   &emplid  ' - ' #count ' - ' &time
+   show 'b.emplid'  &b.emplid
+   show 'b.effdt '  &b.effdt
+   show 'b.effseq'  &b.effseq
+
+    let $separation_flag   = substr(&gvt_noa_code,1,1)
+
+    if $separation_flag <> '3'
+        do format-key-data
+        do get-other-data
+        do write-data
+    end-if
+
+from ps_gvt_pers_data    a,
+     ps_gvt_job          b,
+     ps_gvt_employment   g,
+     ps_pers_nid         nid
+where a.emplid          = b.emplid
+  and a.effdt           = b.effdt
+  and a.effseq          = b.effseq
+  and b.effdt           = (select max(d.effdt)
+                           from ps_gvt_job           d
+                           where d.emplid   = b.emplid
+                           and d.empl_rcd#  = b.empl_rcd#
+                           and d.effdt     <= $asofdate
+                           and d.gvt_wip_status in ('HR','COR'))
+  and b.effseq          = (select max(e.effseq)
+                           from ps_gvt_job           e
+                           where e.emplid   = b.emplid
+                           and e.empl_rcd#  = b.empl_rcd#
+                           and e.effdt      = b.effdt
+                           and e.gvt_wip_status in ('HR','COR'))
+  and g.emplid          = b.emplid
+  and g.effdt           = b.effdt
+  and g.effseq          = b.effseq
+  and nid.emplid        =  b.emplid
+  and nid.country       =  'USA'
+  and nid.national_id_type = 'PR'
+  and b.gvt_wip_status  in ('HR','COR')
+  and b.empl_status     in ('A','L','S','P')
+order by b.gvt_poi,
+         nid.national_id
+end-select
+
+    !show 'ssn     = ' &nid.national_id
+    !show 'name    = ' &name                                       !JMW 3/28/2000
+    !show 'emplid  = ' &emplid                                     !JMW 3/28/2000
+    !show 'gvt_poi = ' &gvt_poi                                    !JMW 3/28/2000
+    !show 'just ending process-program procedure'                  !JMW 3/28/2000
+
+end-procedure
+
+begin-procedure get-time                                 !j
+    date-time  () 'DD/MM/YY HH:MI:SS' &time              !j
+end-procedure !get time                                  !j
+
+!*************  Begin Modification 09/18/01 JNA  PPR361  ******************
+begin-procedure get-salary-cap                           !j
+let $asofyear  = substr($asofdate, 8, 4)                 !j
+                                                         !j
+begin-select                                             !j
+pay.dl_pay_cap_amt &cap                                  !j
+  let #salary_cap = edit(&cap,'999999.99')               !j
+from ps_dl_fy_pay_cap pay                                !j
+where pay.fiscal_year = $asofyear                        !j
+end-select                                               !j
+end-procedure
+!*************  End Modification 09/18/01 JNA  PPR361  ******************
+
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-earnings-tbl                                                *
+!*       - Extracts multiplication factor for availability pay from          *
+!*         PS_EARNINGS_TBL.                                                  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-earnings-tbl
+    !show 'just started get-data-ps-earnings-tbl procedure'              !JMW 3/28/2000
+
+begin-select
+a.factor_mult                            &factor_mult
+
+    let #factor_mult                   = &factor_mult
+
+from  ps_earnings_tbl     a
+where a.erncd            = {availability_pay_erncd}
+  and a.eff_status       = 'A'
+  and a.effdt            = (select max(b.effdt)
+                            from ps_earnings_tbl   b
+                            where b.erncd      = a.erncd
+                              and b.eff_status = a.eff_status
+                              and b.effdt     <= $asofdate)
+end-select
+
+    !show 'just ending get-data-ps-earnings-tbl procedure'              !JMW 3/28/2000
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   format-key-data                                                         *
+!*       - Formats data extracted from PS_GVT_PERS_DATA, PS_GVT_JOB,         *
+!*         PS_GVT_EMPLOYMENT and PS_GVT_PERS_NID so that it can be written   *
+!*         on an output file.                                                *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure format-key-data
+    !show 'just started format-key-data procedure'                 !JMW 3/28/2000
+
+    let $ps_emplid                = &emplid
+    let $ps_name                  = &name
+    let $ps_sex                   = &sex
+    let $ps_birthdate             = &birthdate
+    let $empl_status              = &empl_status
+!   let $ps_ssn                   = &ssn                           !JMW 1/28/2000
+    LET $ps_ssn                   = RTRIM(&nid.national_id,' ')    !JMW 1/28/2000 added
+    let $ps_gvt_vet_pref_appt     = &gvt_vet_pref_appt
+    let $ps_ethnic_group          = &ethnic_group
+    let $dl_tsp_election          = &dl_tsp_election
+    let $dl_tsp_status_dt         = &dl_tsp_status_dt
+    let $pers_tsp_status_dt       = &pers_tsp_status_dt
+    let $ps_orgcode               = &deptid
+    let $gvt_elig_fehb            = &gvt_elig_fehb             ! GMD added 8/2    !j moved to here by PPR361 consolidated with main loop
+
+        if $ps_ssn = '421669666'
+           let $ps_empl_status = '0'
+        else
+           evaluate $empl_status
+              when = 'A'
+              when = 'P'
+                let $ps_empl_status = '1'
+                break
+              when = 'L'
+                let $ps_empl_status = '2'
+                break
+              when = 'S'
+                let $ps_empl_status = '3'
+                break
+              when = 'Q'
+              when = 'R'
+              when = 'T'
+              when = 'U'
+              when = 'V'
+              when = 'X'
+              when = 'D'
+                let $ps_empl_status = '4'
+                break
+           end-evaluate
+        end-if
+!++++++++
+!    if substr(&gvt_noa_code,1,1) = '3'
+!        move '4'                            to $ps_empl_status
+!    else
+!        if &gvt_noa_code = '430'  or
+!           &gvt_noa_code = '460'  or
+!           &gvt_noa_code = '473'  or
+!           &gvt_noa_code = '773'
+!            move '2'                        to $ps_empl_status
+!        else
+!            if &gvt_noa_code = '450'  or
+!               &gvt_noa_code = '452'  or
+!               &gvt_noa_code = '471'  or
+!               &gvt_noa_code = '472'  or
+!               &gvt_noa_code = '772'
+!                move '3'                    to $ps_empl_status
+!            else
+!                move '1'                    to $ps_empl_status
+!            end-if
+!        end-if
+!    end-if
+
+    let $ps_empl_basis            = &gvt_wrk_sched
+    let $ps_empl_type             = &empl_type
+
+    if &std_hours = 40
+        let $ps_std_hours             = edit(0,'099')
+    else
+        let #work_hours               = 20 * &std_hours
+        let $ps_std_hours             = edit(#work_hours,'099')
+    end-if
+
+    let $ps_gvt_pay_rate_deter    = &gvt_pay_rate_deter
+!   let $ps_ern_program           = &ern_program                JMW 1/28/2000 commented out
+    let $ps_gvt_pay_plan          = &gvt_pay_plan              !JMW 1/28/2000 added
+    let $ps_sal_admin_plan        = &sal_admin_plan
+    let $ps_grade                 = &grade
+    let $ps_grade_entry_dt        = &grade_entry_dt
+    let #ps_step                  = &step
+    let $ps_step                  = edit(&step,'09')
+!   let $ps_gvt_rtnd_ern_prgm     = &gvt_rtnd_ern_prgm           JMW 1/28/2000 comment out
+    let $ps_gvt_rtnd_pay_plan     = &gvt_rtnd_pay_plan          !JMW 1/28/2000 added
+    let $ps_gvt_rtnd_grade        = &gvt_rtnd_grade
+    let $ps_gvt_rtnd_step         = edit(&gvt_rtnd_step,'0999')
+    let $ps_gvt_pay_basis         = substr(&gvt_pay_basis,2,1)
+    let #gvt_hrly_rt_no_loc       = edit(&gvt_hrly_rt_no_loc,'09999999') ! GMD added 5/8/2000
+    let #gvt_comprate             = edit(&gvt_comprate,'09999999')
+    let #gvt_locality_adj         = edit(&gvt_locality_adj,'09999999')
+
+
+                                                                   !j  moved for ppr361 to retrieve retention pay before total salary due to it's need in during the calculation
+    let $avl_flag                       = 'N'                      !j
+    let $ps_retention_allowance_amt     = edit(0,'099999V99')      !j
+    let $ps_supervisory_diff_amt        = edit(0,'099999V99')      !j
+    let $ps_auo_pct                     = '00000'                  !j
+    do get-data-ps-gvt-joberns                                     !j
+
+    evaluate $ps_gvt_pay_basis
+        when = 'A'    !  'PA'
+          let #ps_total_salary  = #gvt_comprate + #gvt_locality_adj + #ps_ret_amt        !j added retention pay
+
+          !display '#ps_total_salary ' noline
+          !display  #ps_total_salary
+
+          if #ps_total_salary > #salary_cap                                      !j  09/18/01 JNA  PPR361
+             let #cap_difference   = #ps_total_salary - #salary_cap              !j  09/18/01 JNA  PPR361
+             let #gvt_locality_adj = #gvt_locality_adj - #cap_difference
+             let #ps_total_salary = #salary_cap                                  !j  09/18/01 JNA  PPR361
+          !display '#gvt_comprate ' noline
+          !display  #gvt_comprate
+          !display '#gvt_locality_adj ' noline
+          !display  #gvt_locality_adj
+          !display '#cap_difference ' noline
+          !display  #cap_difference
+          !display '#ps_total_salary ' noline
+          !display  #ps_total_salary
+          !display ' '
+          end-if
+          break
+        when = 'H'    !  'PH'
+          do get-data-ps-sal-step-tbl                           !j Subroutine was written but never called throughout SQR
+          let #ps_total_salary = #ps_hourly_rt
+          show 'Hourly rate is :' #ps_hourly_rt
+          break
+        when = 'D'    !  'PD'
+          let #ps_total_salary = (&gvt_comprate / 2080) * 8
+          break
+        end-evaluate
+
+    let $ps_gvt_locality_adj      = edit(#gvt_locality_adj,'099999V99')
+    let #annl_benef_base_rt       = &annl_benef_base_rt
+    let $ps_dl_snap_flsa          = &flsa_status
+    let $ps_gvt_retire_plan       = &gvt_retire_plan
+    let $ps_gvt_ann_ind           = &gvt_ann_ind
+    let $ps_gvt_fegli             = &gvt_fegli
+    let $ps_gvt_annuity_offset    = edit(&gvt_annuity_offset,'099999')
+    let $ps_gvt_poi               = &gvt_poi
+    let $ps_gvt_posn_occupied     = &gvt_posn_occupied
+    let $ps_benefit_program       = &benefit_program
+    let $ps_hire_dt               = &hire_dt
+    let $ps_service_dt            = &service_dt
+    let $ps_gvt_scd_retire        = &gvt_scd_retire
+    let $ps_gvt_scd_tsp           = &gvt_scd_tsp
+    let $ps_gvt_dt_lei            = &gvt_dt_lei
+    let $ps_gvt_tenure            = &gvt_tenure
+
+    if #gvt_locality_adj <= 0                                             !j 09/18/01 JNA  PPR361
+        move 'N'                            to $ps_locality_ind           !j 09/18/01 JNA  PPR361
+    else
+        move 'Y'                            to $ps_locality_ind
+    end-if
+
+    let $input_jobcode            = &jobcode
+    let $input_position_nbr       = &position_nbr
+    let $input_location           = &location
+    let $input_deptid             = &deptid
+
+    !show 'ps_ssn     = ' $ps_ssn                                  !JMW 3/28/2000
+    !show 'ps_gvt_poi = ' $ps_gvt_poi                              !JMW 3/28/2000
+    !show 'just leaving format-key-data procedure'                 !JMW 3/28/2000
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-sal-step-tbl                                                *
+!*       - Extracts hourly rate for an employee.                             *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-sal-step-tbl
+  !show 'just started get-data-ps-sal-step-tbl procedure'                 !JMW 3/28/2000
+
+begin-select
+a.hourly_rt                              &hourly_rt
+
+    let #ps_hourly_rt                  = &hourly_rt
+
+from ps_sal_step_tbl a
+where a.setid          = $ps_gvt_pay_plan         ! JMW 1/28/2000 added
+  and a.sal_admin_plan = $ps_sal_admin_plan
+  and a.grade          = $ps_grade
+  and a.step           = #ps_step
+  and a.effdt          = (select max(b.effdt)
+                          from ps_sal_step_tbl b
+                          where b.setid          = a.setid        !JMW 1/28/2000 added
+                            and b.sal_admin_plan = a.sal_admin_plan
+                            and b.grade          = a.grade
+                            and b.step           = a.step
+                            and b.effdt         <= $asofdate)
+end-select
+   !show 'just leaving get-data-ps-sal-step-tbl procedure'                 !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-other-data                                                          *
+!*       - Calls rotuines which extracts data from other tables for each     *
+!*         employee.                                                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-other-data
+   !show 'just started get-other-data procedure'                      !JMW 3/28/2000
+  !j  moved joberns code for ppr361 to retrieve retention pay before total salary due to it's need in during the calculation
+
+    let $ps_benefit_plan               = '000000'
+    let $ps_covrg_cd                   = '0'
+
+    do get-data-ps-health-benefit
+
+    let $ps_dl_ambasdor_salary          = edit(0,'09999999')
+    let $ps_dl_ipa_salary_amt           = edit(0,'09999999')
+    let $ps_dl_special_emp_cd           = 'YY'
+
+    do get-data-ps-dl-ips-interfac
+
+    let $ps_dl_j4c                      = edit(0,'09999999')
+    let $ps_dl_m0h                      = edit(0,'09999999')
+    let $ps_dl_xxs                      = edit(0,'09999999')
+
+    let $ps_accomplishment   = ' '
+
+    do get-data-ps-accomplishments
+
+    let $ps_flat_ded_amt               = edit(0,'099999V99')
+    let $ps_pct_gross                  = edit(0,'099999V99')
+!*************  Begin Modification 09/18/01 JNA  PPR361  ******************
+!j    let $ps_investment_pct_g           = edit(0,'09999V99')
+!j    let $ps_investment_pct_f           = edit(0,'09999V99')
+!j    let $ps_investment_pct_c           = edit(0,'09999V99')
+!j    let $investment_pct_g_found        = 'N'
+!j    let $investment_pct_f_found        = 'N'
+!j    let $investment_pct_c_found        = 'N'
+!j    let $ps_coverage_elect             = ' '
+
+    let $ps_coverage_begin_dt          = $dl_tsp_status_dt
+    do get-data-ps-savings-plan
+
+!j    let $ps_coverage_elect             = $dl_tsp_election
+!j    if $ps_coverage_elect <> {coverage_elect_terminate}
+!j        do get-data-ps-savings-invest
+!j        if $investment_pct_g_found = 'N'  and
+!j           $investment_pct_f_found = 'N'  and
+!j           $investment_pct_c_found = 'N'
+!j            do get-data-ps-gvt-tsp-inv-dta
+!j        end-if
+!j    else
+!j        do get-data-ps-gvt-tsp-inv-dta
+!j    end-if
+!*************  End Modification 09/18/01 JNA  PPR361  ******************
+
+    let $ps_review_rating        = ' '
+
+    do get-data-ps-employee-review
+
+    let $ps_gvt_occ_series        = ' '
+    let $ps_manager_level         = ' '
+    let $ps_gvt_posn_title_cd     = ' '
+    let $ps_patcob_cd             = ' '
+
+    do get-data-ps-jobcode-tbl
+
+    let $ps_gvt_geoloc_cd         = edit(0,'099999999')
+
+    do get-data-ps-location-tbl
+
+    let $input_flat_rate_id             = substr($ps_benefit_plan,1,2) ||
+                                          substr($ps_covrg_cd,1,1)
+
+    !show 'input_flat_rate_id ==>'   $input_flat_rate_id               !JMW 4/19/2000
+    let $ps_emplr_covrg_rate            = edit(0,'09999999V9999')
+    let $ps_empl_covrg_rate             = edit(0,'09999999V9999')
+
+    do get-data-ps-flat-rate-tbl
+
+    let #ps_availability_pay      = 0
+    let $ps_availability_pay      = edit(0,'099999V99')
+    let $gvt_leo_position         = ' '
+
+    do get-data-ps-position-data
+
+    if ($avl_flag = 'Y'         and
+       ($gvt_leo_position = 'P' or
+        $gvt_leo_position = 'S'))
+        let #ps_availability_pay      = #annl_benef_base_rt * #factor_mult
+        let $ps_availability_pay      = edit(#ps_availability_pay,'099999V99')
+    end-if
+    let $ps_total_salary          = edit(#ps_total_salary,'099999V99')
+
+!    do get-acct-cd-data                           !j PPR361 moved to beginning of program, only need be called once, needs to be the same for all accounting codes
+
+    let $acct_cd = &acct_cd
+    let $part1 = substr($acct_cd, 1, 4)  !G401
+    let $part2 = substr($acct_cd, 5, 4)  !RJAC
+    let $part3 = substr($acct_cd, 9, 12) !780001101000
+    let $year  = substr($fiscal_year, 4, 1) !1
+    let $acct_cd = $part2 || $year || 'D' || $part1 || $part3
+
+  !  display '$part1 ' noline
+  !  display  $part1
+  !  display '$part2 ' noline
+  !  display  $part2
+  !  display '$part3 ' noline
+  !  display  $part3
+  !  display '$year  ' noline
+  !  display  $year
+  !  display '$ps_ssn ' noline
+  !  display  $ps_ssn
+  !  display '$acct_cd '
+  !  display  $acct_cd
+
+
+   !show 'just leaving get-other-data procedure'                      !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-gvt-joberns                                                 *
+!*       - Extracts data from PS_GVT_JOBERNS for a given employee and        *
+!*         reformats the data so that it can be written to output file.      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-gvt-joberns
+   !show 'just started get-data-ps-gvt-joberns procedure'                 !JMW 3/28/2000
+
+let #ps_ret_amt = 0
+
+begin-select
+a.amount                                    &amount
+a.erncd                                     &erncd
+
+    let $erncd                          = substr(&erncd,1,3)
+
+    if $erncd = 'RET'
+        let #ps_ret_amt = &amount * 26                                  !j multiply by 26 since value is pay period amt
+        let $ps_retention_allowance_amt = edit(#ps_ret_amt,'099999V99') !j
+    end-if
+
+    if $erncd = 'AVL'
+        let $avl_flag                   = 'Y'
+    end-if
+
+    let $erncd                          = substr(&erncd,1,1)
+
+    if $erncd = 'U'
+        let $ps_supervisory_diff_amt    = edit(&amount,'099999V99')
+    end-if
+
+from  ps_gvt_joberns      a
+where a.emplid           = $ps_emplid
+  and (a.erncd      like   {retention_allowance_erncd}
+   or  a.erncd      like   {supervisory_diff_erncd}
+   or  a.erncd      like   {availability_pay_erncd_flag})
+   and a.effdt = &b.effdt
+   and a.effseq = &b.effseq
+end-select
+
+   !show 'just ending get-data-ps-gvt-joberns procedure'                  !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-health-benefit                                              *
+!*       - Extracts data from PS_HEALTH_BENEFIT  for a given employee and    *
+!*         reformats the data so that it can be written to output file.      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-health-benefit
+   !show 'just started get-data-ps-health-benefit procedure'                !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+a.benefit_plan                              &benefit_plan
+a.covrg_cd                                  &covrg_cd
+
+    move 'Y'                                to $row_found
+
+    !show 'emplid-->' $ps_emplid
+    !show 'ps_benefit_plan value before --> ' $ps_benefit_plan
+
+    LET $ps_benefit_plan = RTRIM(&benefit_plan,'') ! JMW 4/19/2000
+    IF  &benefit_plan     = ' '                    ! JMW 4/19/2000
+        let $ps_benefit_plan = '000000'            ! JMW 4/19/2000
+    ELSE                                           ! JMW 4/19/2000
+        let $ps_benefit_plan   = &benefit_plan
+    END-IF                                         ! JMW 4/19/2000
+    !show 'ps_benefit_plan value after--> ' $ps_benefit_plan
+
+    !show 'ps_covrg_cd value before--> ' $ps_covrg_cd
+    IF  &covrg_cd = ' '                            ! JMW 4/19/2000
+        let $ps_covrg_cd = '0'                     ! JMW 4/19/2000
+    ELSE                                           ! JMW 4/19/2000
+        let $ps_covrg_cd       = &covrg_cd
+    END-IF                                         ! JMW 4/19/2000
+    !show 'ps_covrg_cd value after --> ' $ps_covrg_cd
+
+!j    let $gvt-elig-fehb = ' '                       ! GMD added 8/2    !j moved from here by PPR361 consolidated with main loop
+!j    do check-employee-eligibility                  ! GMD added 8/2   !j no longer needed due to PPR361 consolidated with main loop
+    IF $gvt_elig_fehb = 'NE'                       ! GMD added 8/2
+       let $ps_benefit_plan = '000000'             ! GMD added 8/2
+       let $ps_covrg_cd = '0'                      ! GMD added 8/2
+    END-IF                                         ! GMD added 8/2
+
+from  ps_health_benefit   a
+where a.emplid           = $ps_emplid
+  and a.effdt            = (select max(b.effdt)
+                            from ps_health_benefit    b
+                            where b.emplid     = a.emplid
+                              and b.empl_rcd#  = a.empl_rcd#
+                              and b.effdt     <= $asofdate)
+ end-select
+
+    !show 'just ending get-data-ps-health-benefit procedure'                  !JMW 3/28/2000
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   check-employee-eligibility                                              *
+!*       - Selects from PS_GVT_JOB for and checks to see if the current      *
+!*         employee has benefits                                             *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure check-employee-eligibility                   ! GMD added 8/2
+                                                             ! GMD added 8/2
+begin-select                                                 ! GMD added 8/2
+a.gvt_elig_fehb  &a.gvt_elig_fehb                            ! GMD added 8/2
+                                                             ! GMD added 8/2
+  move &a.gvt_elig_fehb to $gvt-elig-fehb                    ! GMD added 8/2
+                                                             ! GMD added 8/2
+from ps_gvt_job a                                            ! GMD added 8/2
+where a.emplid = $ps_emplid and                              ! GMD added 8/2
+      a.effdt = (select max(y.effdt) from                    ! GMD added 8/2
+                 ps_gvt_job y                                ! GMD added 8/2
+                 where                                       ! GMD added 8/2
+                 a.emplid = y.emplid)                        ! GMD added 8/2
+end-select                                                   ! GMD added 8/2
+                                                             ! GMD added 8/2
+end-procedure check-employee-eligibility                     ! GMD added 8/2
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-dl-ips-interfac                                             *
+!*       - Extracts data from PS_DL_IPS_INTERFAC for a given employee and    *
+!*         reformats the data so that it can be written to output file.      *
+!*       -                                                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-dl-ips-interfac
+    !show 'just started get-data-ps-dl-ips-interfac procedure'               !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+a.dl_fehb_pt_prorate                        &dl_fehb_pt_prorate
+a.dl_special_emp_cd                         &dl_special_emp_cd
+a.dl_leave_elig_cd                          &dl_leave_elig_cd
+a.dl_ambasdor_salary                        &dl_ambasdor_salary
+a.dl_sev_pay_tot                            &dl_sev_pay_tot
+a.dl_ipa_salary_amt                         &dl_ipa_salary_amt
+    move 'Y'                                to $row_found
+
+    let $ps_dl_fehb_pt_prorate    = &dl_fehb_pt_prorate
+    let $ps_dl_special_emp_cd     = &dl_special_emp_cd
+    let $ps_dl_leave_elig_cd      = &dl_leave_elig_cd
+    let $ps_dl_ambasdor_salary    = edit(&dl_ambasdor_salary,'09999999')
+    let $ps_dl_sev_pay_tot        = edit(&dl_sev_pay_tot,'0999999')           !j  09/18/01 JNA  PPR361
+    let $ps_dl_ipa_salary_amt     = edit(&dl_ipa_salary_amt,'09999999')
+
+from  ps_dl_ips_interfac  a
+where a.emplid           = $ps_emplid
+  and a.effdt            = (select max(b.effdt)
+                            from ps_dl_ips_interfac   b
+                            where b.emplid = a.emplid
+                              and b.effdt <= $asofdate)
+  and a.effseq           = (select max(c.effseq)
+                            from ps_dl_ips_interfac   c
+                            where c.emplid  = a.emplid
+                              and c.effdt   = a.effdt)
+end-select
+
+    !show 'just ending get-data-ps-dl-ips-interfac procedure'               !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-accomplishments                                             *
+!*       - Extracts data from PS_ACCOMPLISHMENTS for a given employee and    *
+!*         reformats the data so that it can be written to output file.      *
+!*       -                                                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-accomplishments
+
+    !show 'just started get-data-ps-accomplishments procedure'               !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+a.accomplishment                            &accomplishment
+
+    move 'Y'                                to $row_found
+
+    let $ps_accomplishment   = &accomplishment
+
+from  ps_accomplishments    a,
+      ps_accomp_tbl         b
+where a.emplid           = $ps_emplid
+  and a.accomplishment   = b.accomplishment
+  and b.accomp_category  = 'DEG'
+end-select
+
+    !show 'just ending get-data-ps-accomplishments procedure'               !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-savings-plan                                                *
+!*       - Extracts data from PS_SAVINGS_PLAN for a given employee and       *
+!*         reformats the data so that it can be written to output file.      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-savings-plan
+
+    !show 'just started get-data-ps-savings-plan procedure'               !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+!to_char(a.effdt,'YYYYMMDD')                 &coverage_begin_dt
+a.flat_ded_amt                              &flat_ded_amt
+a.pct_gross                                 &pct_gross
+
+    move 'Y'                                to $row_found
+
+!    let $ps_coverage_begin_dt      = &coverage_begin_dt
+    let $ps_flat_ded_amt           = edit(&flat_ded_amt,'099999V99')
+    let $ps_pct_gross              = edit(&pct_gross,'099999V99')
+
+from  ps_savings_plan     a
+where a.emplid           = $ps_emplid
+  and a.effdt            = (select max(b.effdt)
+                            from ps_savings_plan b
+                            where b.emplid     = a.emplid
+                              and b.empl_rcd#  = a.empl_rcd#
+                              and b.effdt     <= $asofdate)
+end-select
+
+    !show 'just ending get-data-ps-savings-plan procedure'               !JMW 3/28/2000
+
+end-procedure
+
+!*************  Begin Modification 09/18/01 JNA  PPR361  ******************
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-gvt-tsp-inv-dta                                             *
+!*       - Extracts data from PS_GVT_TSP_INV_DTA for a given employee and    *
+!*         reformats the data so that it can be written to output file.      *
+!*         PROCEDURE NO LONGER NEEDED                                                                  *
+!*****************************************************************************
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-savings-invest                                              *
+!*       - Extracts data from PS_SAVINGS_INVEST  for a given employee and    *
+!*         reformats the data so that it can be written to output file.      *
+!*         PROCEDURE NO LONGER NEEDED                                                                  *
+!*****************************************************************************
+!*************  End Modification 09/18/01 JNA  PPR361  ******************
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-employee-review                                             *
+!*       - Extracts data from PS_EMPLOYEE_REVIEW for a given employee and    *
+!*         reformats the data so that it can be written to output file.      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-employee-review
+
+    !show 'just started get-data-ps-employee-review procedure'              !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+a.review_rating                            &review_rating
+
+    move 'Y'                                to $row_found
+
+    let $ps_review_rating        = &review_rating
+
+from  ps_employee_review  a
+where a.emplid           = $ps_emplid
+  and a.effdt            = (select max(b.effdt)
+                            from ps_employee_review   b
+                            where b.emplid     = a.emplid
+                              and b.empl_rcd#  = a.empl_rcd#
+                              and b.effdt     <= $asofdate)
+end-select
+
+    !show 'just ending get-data-ps-employee-review procedure'              !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-jobcode-tbl                                                 *
+!*       - Extracts data from PS_JOBCODE_TBL for the jobcode of an employee  *
+!*         and reformats the data so that it can be written to output file.  *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-jobcode-tbl
+
+    !show 'just started get-data-ps-jobcode-tbl procedure'                !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+a.gvt_occ_series                            &gvt_occ_series
+a.manager_level                             &manager_level
+a.gvt_posn_title_cd                         &gvt_posn_title_cd
+a.gvt_patcob_cd                             &gvt_patcob_cd
+
+    move 'Y'                                to $row_found
+
+    let $ps_gvt_occ_series        = &gvt_occ_series
+    let $ps_manager_level         = &manager_level
+    let $ps_gvt_posn_title_cd     = &gvt_posn_title_cd
+    let $ps_patcob_cd             = &gvt_patcob_cd
+
+from  ps_jobcode_tbl      a
+where a.jobcode          = $input_jobcode
+  and a.eff_status       = 'A'
+  and a.effdt            = (select max(b.effdt)
+                            from ps_jobcode_tbl b
+                            where b.jobcode     = a.jobcode
+                              and b.eff_status  = a.eff_status
+                              and b.effdt      <= $asofdate)
+end-select
+
+    !show 'just ending get-data-ps-jobcode-tbl procedure'                !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-location-tbl                                                *
+!*       - Extracts data from PS_LOCATION_TBL for the employees location and *
+!*         reformats the data so that it can be written to output file.      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-location-tbl
+
+    !show 'just started get-data-ps-location-tbl procedure'                !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+a.gvt_geoloc_cd                             &gvt_geoloc_cd
+
+    move 'Y'                                to $row_found
+
+    let $ps_gvt_geoloc_cd         = edit(&gvt_geoloc_cd,'099999999')
+
+from  ps_location_tbl     a
+where a.location         = $input_location
+  and a.eff_status       = 'A'
+  and a.effdt            = (select max(b.effdt)
+                            from ps_location_tbl    b
+                            where b.location    = a.location
+                              and b.eff_status  = a.eff_status
+                              and b.effdt      <= $asofdate)
+end-select
+
+    !show 'just ending get-data-ps-location-tbl procedure'                !JMW 3/28/2000
+
+end-procedure
+
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-flat-rate-tbl                                               *
+!*       - Extracts data from PS_BEN_DEFN_COST and PS_FLAT_RATE_TBL for an   *
+!*         employee and reformats the data so that it can be written to an   *
+!*         output file.                                                      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-flat-rate-tbl
+
+    !show 'just started get-data-ps-flat-rate-tbl procedure'                !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+a.emplr_covrg_rate                          &emplr_covrg_rate
+a.empl_covrg_rate                           &empl_covrg_rate
+
+    move 'Y'                                to $row_found
+
+    let $ps_emplr_covrg_rate      = edit(&emplr_covrg_rate,'09999999V9999')
+    let $ps_empl_covrg_rate       = edit(&empl_covrg_rate,'09999999V9999')
+
+from  ps_flat_rate_tbl    a
+where a.flat_rate_id     = $input_flat_rate_id
+  and a.effdt            = (select max(b.effdt)
+                            from ps_flat_rate_tbl   b
+                            where b.flat_rate_id  = a.flat_rate_id
+                              and b.effdt          <= $asofdate)
+end-select
+
+    !show 'just ending get-data-ps-flat-rate-tbl procedure'                !JMW 3/28/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-data-ps-position-data                                               *
+!*       - Extracts data from PS_POSITION_DATA for an employee.              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-data-ps-position-data
+
+    !show 'just started get-data-ps-position-data procedure'              !JMW 3/28/2000
+
+    move 'N'                                to $row_found
+
+begin-select
+a.gvt_leo_position                          &gvt_leo_position
+
+    move 'Y'                                to $row_found
+
+    let $gvt_leo_position         = &gvt_leo_position
+
+from  ps_position_data    a
+where a.position_nbr     = $input_position_nbr
+  and a.eff_status       = 'A'
+  and a.effdt            = (select max(b.effdt)
+                            from ps_position_data   b
+                            where b.position_nbr  = a.position_nbr
+                              and b.eff_status    = a.eff_status
+                              and b.effdt          <= $asofdate)
+end-select
+
+    !show 'just ending get-data-ps-position-data procedure'              !JMW 3/28/2000
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   get-acct-cd-data                                                        *
+!*       - Extracts year and concatenates it in the account code             *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure get-acct-cd-data
+    !show 'just started get-acct-cd-data'              !GMD 6/01/2000
+
+       move 'N'                                to $row_found
+
+begin-select
+fiscal_year
+
+       let $fiscal_year = &fiscal_year
+       move 'Y'                                to $row_found
+
+from ps_dl_fisc_year
+where effdt = (select max(fy.effdt)
+               from ps_dl_fisc_year fy
+               where fy.fiscal_year = fiscal_year
+               and   fy.effdt <= $asofdate)
+end-select
+
+    !show 'just ending get-acct-cd-data'               !GMD 6/01/2000
+
+end-procedure
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   write-data                                                              *
+!*       - Writes data to an output peoplesoft file.                         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure write-data
+
+    !show 'just started write-data procedure'                     !JMW 3/28/2000
+
+    write 1                                 from $ps_ssn:9
+                                                 $ps_name:25
+                                                 $ps_sex:1
+                                                 $ps_birthdate:8
+                                                 $ps_gvt_tenure:1
+                                                 $ps_service_dt:8
+                                                 $ps_dl_snap_flsa:1
+                                                 $ps_empl_basis:1
+                                                 $ps_empl_status:1
+                                                 $ps_gvt_retire_plan:1
+                                                 $ps_grade_entry_dt:8
+                                                 $ps_gvt_dt_lei:8
+                                                 $ps_hire_dt:8
+                                                 $ps_dl_special_emp_cd:2
+                                                 $ps_gvt_occ_series:5
+                                                 $ps_gvt_posn_title_cd:2
+                                                 $ps_gvt_posn_occupied:1
+!                                                $ps_ern_program:2        JMW 1/28/2000 comment out
+                                                 $ps_gvt_pay_plan:2      !JMW 1/28/2000 added
+                                                 $ps_grade:2
+                                                 $ps_step:2
+                                                 $ps_total_salary:8
+                                                 $ps_empl_type:1
+                                                 $ps_gvt_pay_basis:1
+                                                 $ps_gvt_fegli:2
+                                                 $ps_std_hours:3
+                                                 $ps_dl_leave_elig_cd:1
+                                                 $ps_auo_pct:5
+                                                 $ps_orgcode:10
+                                                 $ps_gvt_geoloc_cd:9
+                                                 $ps_gvt_poi:4
+                                                 $ps_benefit_plan:2
+                                                 $ps_covrg_cd:1
+                                                 $ps_empl_covrg_rate:12
+                                                 $ps_emplr_covrg_rate:12
+                                                 $ps_dl_fehb_pt_prorate:1
+                                                 $ps_gvt_ann_ind:1
+                                                 $ps_gvt_annuity_offset:6
+                                                 $ps_gvt_scd_retire:8
+                                                 $ps_dl_j4c:8
+                                                 $ps_dl_xxs:8
+                                                 $ps_dl_m0h:8
+!                                                $ps_gvt_rtnd_ern_prgm:3   JMW 1/28/2000  removed
+                                                 $ps_gvt_rtnd_pay_plan:2  !JMW 1/28/2000  added
+                                                 $ps_gvt_rtnd_grade:3
+                                                 $ps_gvt_rtnd_step:4
+                                                 $ps_dl_sev_pay_tot:7
+                                                 $ps_accomplishment:2
+                                                 $ps_ethnic_group:1
+                                                 $ps_review_rating:1
+                                                 $ps_manager_level:2
+                                                 $ps_gvt_vet_pref_appt:1
+                                                 $ps_patcob_cd:1
+                                                 $ps_coverage_elect:1
+                                                 $ps_flat_ded_amt:8
+                                                 $ps_coverage_begin_dt:8
+                                                 $ps_gvt_scd_tsp:8
+                                                 $ps_pct_gross:8
+                                                 $ps_investment_pct_g:7
+                                                 $ps_investment_pct_f:7
+                                                 $ps_investment_pct_c:7
+                                                 $ps_dl_ambasdor_salary:8
+                                                 $ps_dl_ipa_salary_amt:8
+                                                 $ps_availability_pay:8
+                                                 $ps_locality_ind:1
+                                                 $ps_gvt_locality_adj:8
+                                                 $ps_gvt_pay_rate_deter:1
+                                                 $ps_retention_allowance_amt:8
+                                                 $ps_supervisory_diff_amt:8
+                                                 $acct_cd:22
+
+    !show 'just ending write-data procedure'                     !JMW 3/28/2000
+
+end-procedure
+
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   Terminate-program                                                       *
+!*       - Closes file.                                                      *
+!*       - Calls routines which terminates the program.                      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Terminate-program
+
+    !show 'just started Terminate-program procedure'                  !JMW 3/28/2000
+
+    if $system_error = 'N'
+        close 1
+    end-if
+
+    !show 'just going to copy-file-for-next-step procedure from terminate-program' !JMW 3/28/2000
+    do copy-file-for-next-step
+    !show 'just came back from copy-file-for-next-step into terminate-program'     !JMW 3/28/2000
+
+    !show 'just going to commit-transaction procedure from terminate-program'      !JMW 3/28/2000
+    do commit-transaction
+    !show 'just came back from commit-transaction into terminate-program'          !JMW 3/28/2000
+
+    !show 'just going to stdapi-term procedure from terminate-program'             !JMW 3/28/2000
+    do Stdapi-Term
+    !show 'just came back from stdapi-term procedure from terminate-program'       !JMW 3/28/2000
+
+    !show 'just ending Terminate-program procedure'                                !JMW 3/28/2000
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   copy-file-for-next-step                                                 *
+!*       - Copies PS extract so that it can be used by next program.         *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure copy-file-for-next-step
+
+    !show 'just started copy-file-for-next-step procedure'               !JMW 3/28/2000
+
+    #ifdef UNIX
+        let $sort_command = 'cp '  || $outfile_ps
+                                   || ' '
+                                   || $outfile_next
+        !show 'copy outfile_ps from lhrsips4 -->' $outfile_ps            !JMW 3/28/2000
+        !show 'to outfile_next for lhrsips5-->  ' $outfile_next          !JMW 3/28/2000
+        call system using $sort_command #os_status
+    #endif
+
+    if #os_status != 0
+        display '***************************************************'
+        display '* Error while copying file.                       *'
+        display    $outfile_ps
+        display '* Terminating program with return code of 1100.   *'
+        display '* Contact Systems Engineer on call to resolve the *'
+        display '* issue.                                          *'
+        display '***************************************************'
+
+        move 'Y'                            to $system_error
+        move 1100                           to #prcs_rc
+        move 1100                           to #prcs_message_nbr
+        move {error-message}                to $prcs_message_parm1
+        move #prcs_run_status_error         to #prcs_run_status
+    end-if
+
+    !show 'just ending copy-file-for-next-step procedure'               !JMW 3/28/2000
+
+end-procedure
+
+
+#Include 'curdttim.sqc'  !Get-Current-DateTime procedure
+#Include 'datetime.sqc'  !Routines for date and time formatting
+#Include 'number.sqc'    !Routines to format numbers
+#Include 'stdapi.sqc'    !Update Process API

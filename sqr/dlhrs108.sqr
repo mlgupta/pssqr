@@ -1,0 +1,549 @@
+!*****************************************************************************
+!*                                                                           *
+!*    1.  Program Name    : DLHRS108                                         *
+!*                                                                           *
+!*    2.  Program Desc.   : This program prints special consideration report.*
+!*                                                                           *
+!*    3.  Author          : Manish Gupta                                     *
+!*                                                                           *
+!*    4.  Date Written    : 10/19/1998                                       *
+!*                                                                           *
+!*    5.  Files Used                                                         *
+!*           5.1  I/P     : None                                             *
+!*           5.2  O/P     : None                                             *
+!*           5.3  I/O     : None                                             *
+!*           5.4  Reports : DLHRS108  : Special consideration report         *
+!*                                                                           *
+!*    6.  Tables Used                                                        *
+!*           6.1  I/P     : ps_dl_run_cntl_pp                                *
+!*                          ps_gvt_pri_plcmnt                                *
+!*                          ps_dl_desired_city                               *
+!*                          ps_gvt_geo_pref                                  *
+!*                          ps_gvt_prio_tbl                                  *
+!*                          ps_gvt_pers_data                                 *
+!*                          xlattable                                        *
+!*           6.2  O/P     : None                                             *
+!*           6.3  I/O     : None                                             *
+!*                                                                           *
+!*    7.  SQC's Used      : setenv.sqc                                       *
+!*                          setup02.sqc                                      *
+!*                          curdttim.sqc                                     *
+!*                          datetime.sqc                                     *
+!*                          number.sqc                                       *
+!*                          stdapi.sqc                                       *
+!*                          utils.sqc                                        *
+!*                                                                           *
+!*    8.  Return Code                                                        *
+!*           8.1  Success : 0                                                *
+!*           8.1  Error   : None                                             *
+!*                                                                           *
+!*****************************************************************************
+!*                         MODIFICATION LOG                                  *
+!*                         ----------------                                  *
+!*                                                                           *
+!* Date         INI  CR #       Description                                  *
+!* ----         ---  ----       -----------                                  *
+!* 10/19/98     MLG  R-15       - New program.                               *
+!* 01/11/2000   WMH             chg ern_program to GVT_PAY_PLAN for PS 7.5   *
+!* 4/11/2000    WMH             modified to print if no entries in           *
+!*                                ps_dl_desired_city, ps_gvt_geo_pref        *
+!* 4/24/2000    GMD             Modifications:  Added select parameter for   *
+!*                              city.  Re-worked program, removed joins to   *
+!*                              allow all data to be selected.  Changed      *
+!*                              report layout to match new requirements      *
+!* 8/25/00      GMD             Added Priority Placement Code as a run-time  *
+!*                              variable.                                    *
+!* 9/07/00      GMD             Add POI as output column only                *
+!PPR 318        NVN             Add Date selection range to report           *
+!                               Modify report for BRIO Reporting             *
+!*****************************************************************************
+#Include 'setenv.sqc'         !Set environment
+#include 'setup02.sqc'        !printer
+
+#define dlhrs108-title        'SPECIAL CONSIDERATION REPORT'
+#define no-data-to-print      ' ***** NO DATA TO PRINT  *****'
+#define end-of-report         ' **** END OF REPORT ****'
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-heading                                                           *
+!*       - Defines heading for report DLHRS108.                              *
+!*                                                                           *
+!*****************************************************************************
+begin-heading 7
+
+    move 'DLHRS108'                         to $ReportId
+    move {dlhrs108-title}                   to $ReportTitle
+    #Include 'dlhdg01.sqc'
+
+    print 'NAME'                                 (+2,1)
+    print 'PLCMNT CD'                            (0,+23)
+    print 'PAY PLAN'                             (0,+2)
+    print 'OCC SERIES'                           (0,+2)
+    print 'GRADE'                                (0,+2)
+    print 'START DATE'                           (0,+2)
+    print 'END DATE'                             (0,+3)
+    print 'POI'                                  (0,+5)
+    print '----'                                 (+1,1)
+    print '---------'                            (0,+23)
+    print '--------'                             (0,+2)
+    print '----------'                           (0,+2)
+    print '-----'                                (0,+2)
+    print '-----------'                          (0,+2)
+    print '-----------'                          (0,+2)
+    print '---'                                  (0,+2)
+
+end-heading
+
+
+!*****************************************************************************
+!*                                                                           *
+!*   begin-report                                                            *
+!*       - Calls routines to initialize variables and open files.            *
+!*       - Calls routine which processes the report.                         *
+!*       - Calls routine which terminates the report.                        *
+!*                                                                           *
+!*****************************************************************************
+begin-report
+
+    do Init-Report
+    do Get-Desired-States
+    do Terminate-report
+
+end-report
+
+!*****************************************************************************
+!*                                                                           *
+!*   Init-Report                                                             *
+!*       - Calls routine which initializes date and time.                    *
+!*       - Calls routine which initializes standard application programming  *
+!*         interface with peoplesoft process scheduler.                      *
+!*       - Calls routine which intializes number routines.                   *
+!*       - Calls routine which gets current date and time.                   *
+!*       - Calls routine which extracts run control parameters.              *
+!*       - Calls routine which formats the where caluse.                     *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Init-Report
+
+    do Init-DateTime
+    do Stdapi-Init
+    do Init-Number
+    do get-current-datetime
+!*****************  TEST RUN CNTL PARAMETERS   **************************************
+!    do get-run-cntl-parameters
+!    Stop Quiet
+!*****************  TEST RUN CNTL PARAMETERS   **************************************
+
+    if $prcs_process_instance = ''
+        input $gvt_prio_plcmnt_cd 'Enter Priority Placement Code: '
+        input $gvt_pay_plan       'Enter Pay Plan:                '
+        input $grade              'Enter Grade:                   '
+        input $gvt_occ_series     'Enter Occupational Series:     '
+        input $state              'Enter State:                   '
+
+		let $where_clause2 =  ' gvt_prio_dt_end > sysdate '
+
+        if $gvt_prio_plcmnt_cd != ' ' and not isnull($gvt_prio_plcmnt_cd)
+          let $where_clause2 = $where_clause2 || 'AND A1.GVT_PRIO_PLCMNT_CD = ''' || $gvt_prio_plcmnt_cd || ''''
+        end-if
+
+        if $gvt_pay_plan != ' ' and not isnull($gvt_pay_plan)
+          let $where_clause2 = $where_clause2 || 'AND A1.GVT_PAY_PLAN = ''' || $gvt_pay_plan || ''''
+        end-if
+
+        if $gvt_occ_series != ' '  and not isnull($gvt_occ_series)
+          let $where_clause2 = $where_clause2 || '  AND A1.GVT_OCC_SERIES = ''' || $gvt_occ_series  || ''''
+        end-if
+
+        if $grade != ' ' and not isnull($grade)
+          let $where_clause2 = $where_clause2 || '  AND A1.GRADE = ''' || $grade || ''''
+        end-if
+
+!PPR 318 Modification Begin
+        let $where_clause3 = ''
+!       if $state != ' ' and not isnull($state)
+        if UPPER($state) != 'ALL' AND $state != ' ' and not isnull($state)
+           let $where_clause3 =  'WHERE STATE = ''' || $state || ''''
+        else
+           let $where_clause3 =  'WHERE STATE BETWEEN ' || '''AA''' || ' and ' || '''ZZ'''
+        end-if
+
+        display '$where_clause3 ' noline
+        display  $where_clause3
+
+!PPR 318 Modification End
+
+    else
+        do get-run-cntl-parameters
+    end-if
+
+end-procedure
+
+!********************************************************************************
+!*                                                                              *                                      *
+!*   get-run-cntl-parameters                                                    *
+!*       - Extracts run control parameters which are passed from the online     *
+!*         screen.                                                              *
+!********************************************************************************
+begin-procedure get-run-cntl-parameters
+
+  Show 'get-run-cntl-parameters'
+
+begin-select
+runcntl.gvt_prio_plcmnt_cd          &a_gvt_prio_plcmnt_cd
+runcntl.gvt_pay_plan                &a_gvt_pay_plan
+runcntl.grade                       &a_grade
+runcntl.gvt_occ_series              &a_gvt_occ_series
+runcntl.state                       &a_state
+runcntl.from_date                   &from_date
+runcntl.to_date                     &to_date
+
+    move &a_gvt_prio_plcmnt_cd  to $gvt_prio_plcmnt_cd
+    move &a_gvt_pay_plan        to $gvt_pay_plan
+    move &a_grade               to $grade
+    move &a_gvt_occ_series      to $gvt_occ_series
+    move &a_state               to $state
+    move &from_date             to $from_date
+    move &to_date               to $to_date
+!
+!PPR318 Modification Begins
+!    let $where_clause2 =  ' gvt_prio_dt_end > sysdate '
+     let $where_clause2 = ' (app_dt >= ''' || $from_date || ''''
+     let $where_clause2 = $where_clause2 || ' AND gvt_prio_dt_end <= ''' || $to_date || ''') '
+!PPR318 Modification Ends
+
+    if $gvt_prio_plcmnt_cd != ' ' and not isnull($gvt_prio_plcmnt_cd)
+       let $where_clause2 = $where_clause2 || 'AND A1.GVT_PRIO_PLCMNT_CD = ''' || $gvt_prio_plcmnt_cd || ''''
+    end-if
+
+    if $gvt_pay_plan != ' ' and not isnull($gvt_pay_plan)
+       let $where_clause2 = $where_clause2 || 'AND A1.GVT_PAY_PLAN = ''' || $gvt_pay_plan || ''''
+    end-if
+
+    if $gvt_occ_series != ' '  and not isnull($gvt_occ_series)
+       let $where_clause2 = $where_clause2 || '  AND A1.GVT_OCC_SERIES = ''' || $gvt_occ_series  || ''''
+    end-if
+
+    if $grade != ' ' and not isnull($grade)
+       let $where_clause2 = $where_clause2 || '  AND A1.GRADE = ''' || $grade || ''''
+    end-if
+
+!PPR 318 Modification Begin
+!       if $state != ' ' and not isnull($state)
+        if UPPER($state) != 'ALL' AND $state != ' ' and not isnull($state)
+            let $where_clause3 =  'WHERE STATE = ''' || $state || ''''
+!        else
+!            let $where_clause3 =  'WHERE STATE BETWEEN ' || '''AA''' || ' and ' || '''ZZ'''
+        end-if
+
+    display '$where_clause2 ' noline
+    display  $where_clause2
+    display '$where_clause3 ' noline
+    display  $where_clause3
+
+!PPR 318 Modification End
+from ps_dl_run_cntl_pp runcntl
+where runcntl.oprid          = $prcs_oprid
+! where runcntl.oprid          = 'VNELSON'
+!   and runcntl.run_cntl_id    = 'Position'
+  and runcntl.run_cntl_id    = $prcs_run_cntl_id
+end-select
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   Get-Desired-States                                                      *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Get-Desired-States
+
+  Show 'Get-Desired-States '
+  Show 'Where Clause 3 ' $Where_Clause3
+  Show ' '
+
+begin-select distinct
+emplid      &emplid1
+app_dt      &app_dt1
+state       &state
+city        &city
+
+!PPR 318 Modification Begin
+       let $found = 'Y'
+!PPR 318 Modification End
+
+       let $state-key = &emplid1 || &app_dt1
+       if $state-key <> $state-key-hold
+          do Process-Report
+          move $state-key to $state-key-hold
+       end-if
+from ps_dl_desired_city c1
+! where
+[$where_clause3]
+end-select
+
+end-procedure Get-Desired-States
+
+!*****************************************************************************
+!*                                                                           *
+!*   Process-Report                                                          *
+!*       - Main procedure to process report, extracts employees satisfying   *
+!*         priority placement program.                                       *
+!*                                                                           *
+!*****************************************************************************
+BEGIN-PROCEDURE Process-Report
+
+   Show 'Process Report:' &emplid1
+   let $found = 'N'
+
+BEGIN-SELECT
+a1.emplid                &emplid
+a1.app_dt                &app_dt
+a1.gvt_prio_plcmnt_cd    &gvt_prio_plcmnt_cd
+a1.gvt_pay_plan          &gvt_pay_plan
+a1.gvt_occ_series        &gvt_occ_series
+a1.grade                 &grade
+a1.gvt_prio_dt_end       &gvt_prio_dt_end
+a1.comments              &comments
+
+!PPR 318 Modification Begin
+       let $found = 'Y'
+!PPR 318 Modification End
+
+       let $key = &emplid || &app_dt  || &gvt_pay_plan || &gvt_occ_series|| &grade || &gvt_prio_plcmnt_cd
+       Show 'key:' $key
+
+       if $key <> $key-hold
+           Show 'key-hold:' $key-hold
+          let $key-hold = $key
+          if $emplidhold <> &emplid
+             do Get-Employee-Name
+             move &emplid to $emplidhold
+             print &name                  (+2,1)
+
+             do Get-POI
+
+             print $gvt_poi               (+0,94)
+          end-if
+
+             print &gvt_prio_plcmnt_cd    (+0,31)
+             print &gvt_pay_plan          (+0,41)
+             print &gvt_occ_series        (+0,52)
+             print &grade                 (+0,62)
+             print &app_dt                (+0,68)
+             print &gvt_prio_dt_end       (+0,81)
+
+          if not isnull(&comments)
+             print 'Comments:'            (+0,121)
+             do print-word-wrapped(&comments,40,132)
+             print ' '                    (+1,1)
+          end-if
+
+          let #records-read-geo = 0
+          do Get-Geo-Pref
+          print ' '(+1,0)
+          let #records-read-loc = 0
+          do Print-Desired-Locations
+          print ' '(+1,0)
+
+       end-if
+       add 1 to #records-read
+from  ps_gvt_pri_plcmnt a1
+where
+emplid = &emplid1 and
+app_dt = &app_dt1 and
+[$where_clause2]
+order by &emplid, &app_dt, &gvt_pay_plan, &gvt_occ_series , &grade, &gvt_prio_plcmnt_cd
+
+END-SELECT
+
+END-PROCEDURE ! Process-Report
+
+!*****************************************************************************
+!*                                                                           *
+!*   Get-POI                                                                 *
+!*         - Retrieves employee name POI from ps_gvt_job                     *
+!*****************************************************************************
+BEGIN-PROCEDURE Get-POI
+  Show 'Get-POI'
+  let $found = 'N'
+Begin-Select
+a.gvt_poi       &a.gvt_poi
+
+!PPR 318 Modification Begin
+   let $found = 'Y'
+!PPR 318 Modification End
+
+   move &a.gvt_poi to $gvt_poi
+
+from ps_gvt_job a
+where a.emplid = &emplid
+and a.effdt = (select max(b.effdt) from ps_gvt_job b
+               where a.emplid = b.emplid
+               and b.effdt <= sysdate)
+and a.effseq = (select max(c.effseq) from ps_gvt_job c
+                where a.emplid = c.emplid
+                and a.effdt = c.effdt)
+
+End-Select
+!PPR 318 Modification Begin
+   if $found = 'N'
+        Show 'Get POI not Successfull'
+   end-if
+!PPR 318 Modification Begin
+
+END-PROCEDURE Get-POI
+
+!*****************************************************************************
+!*                                                                           *
+!*   Get-Employee-Name                                                       *
+!*         - Retrieves employee name from ps_gvt_pers_data                   *
+!*****************************************************************************
+begin-procedure Get-Employee-Name
+
+  Show 'Get-Employee-Name'
+  Let $found = 'N'
+
+begin-select
+name    &name
+
+  LET $found = 'Y'
+
+ from ps_gvt_pers_data
+ where emplid = &emplid
+
+end-select
+   if $found = 'N'
+        Show 'Get Employee Name not Successfull'
+   end-if
+
+end-procedure ! Get-Employee-Name
+
+!*****************************************************************************
+!*                                                                           *
+!*   Print-Desired-Locations                                                 *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Print-Desired-Locations
+
+   Show 'Print-Desired-Locations'
+    let $found = 'N'
+
+begin-select
+state   &state9
+city    &city9
+
+    let $found = 'Y'
+
+    if #records-read-loc = 0
+       print 'Desired Location:'   (+0,113)
+       print &state9         (+0,132)
+       print &city9          (+0,136)
+    else
+       print &state9         (+1,132)
+       print &city9          (+0,136)
+    end-if
+    add 1 to #records-read-loc
+
+from ps_dl_desired_city
+where emplid = &emplid
+and   app_dt = &app_dt
+
+end-select
+   if $found = 'N'
+        Show 'Print Desired Locations not successfull'
+   end-if
+
+end-procedure Print-Desired-Locations
+
+!*****************************************************************************
+!*                                                                           *
+!*   Get-Geo-Pref                                                            *
+!*       - Retrieve the geographic preference then get the description       *
+!*         for that value from the xlattable                                 *
+!*****************************************************************************
+begin-procedure Get-Geo-Pref
+   Show 'Get-Geo-Pref'
+   let $found = 'N'
+
+begin-select
+g1.geog_preference     &geog_preference
+
+       let  $found = 'Y'
+
+       do xlat-geog-preference(&geog_preference, $geog_preference_descr)
+       if #records-read-geo = 0
+          print 'Sub-Agency Preference:'   (+0,108)
+          print $geog_preference_descr      (+0,132)
+       else
+          print $geog_preference_descr      (+1,132)
+       end-if
+       add 1 to #records-read-geo
+
+from ps_gvt_geo_pref  g1
+where emplid = &emplid
+and   app_dt = &app_dt
+end-select
+   if $found = 'N'
+        Show 'Get Geo-Pref not Successfull'
+   end-if
+
+end-procedure Get-Geo-Pref
+
+!*****************************************************************************
+!*                                                                           *
+!*   xlat-geog-preference                                                    *
+!*       - Gets description of geog-preference.                              *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure xlat-geog-preference($geog_preference, :$geog_preference_descr)
+begin-select
+xlatlongname                           &xlatlongname
+    move &xlatlongname                      to $geog_preference_descr
+from xlattable  a
+where a.fieldname   = 'GEOG_PREFERENCE'
+  and a.fieldvalue  = $geog_preference
+  and a.eff_status  = 'A'
+  and a.effdt       = (select max(b.effdt)
+                       from xlattable  b
+                       where b.fieldname   = a.fieldname
+                         and b.fieldvalue  = a.fieldvalue
+                         and b.eff_status  = a.eff_status
+                         and b.effdt      <= sysdate)
+end-select
+
+end-procedure
+
+!*****************************************************************************
+!*                                                                           *
+!*   Terminate-Report                                                        *
+!*       - Calls routines which notifies process scheduler of termination    *
+!*         of the program.                                                   *
+!*                                                                           *
+!*****************************************************************************
+begin-procedure Terminate-Report
+    do stdapi-term
+    if #records-read = 0
+      print 'Report Parameters:' (+3,05)
+      print $gvt_prio_plcmnt_cd  (+0,31)
+      print $gvt_pay_plan        (+0,42)
+      print $gvt_occ_series      (+0,52)
+      print $grade               (+0,62)
+      show 'STATE ' &a_state
+      if length(rtrim(&a_state,' ')) = 2
+         print 'State:'          (+0,102)
+      end-if
+      print &a_state             (+0,110)
+      print {no-data-to-print}   (+2,74)
+    else
+      print {end-of-report}      (+2,75)
+    end-if
+end-procedure
+
+!**********************************************************************************
+#Include 'curdttim.sqc'  !Get-Current-DateTime procedure
+#Include 'datetime.sqc'  !Routines for date and time formatting
+#Include 'number.sqc'    !Routines to format numbers
+#Include 'stdapi.sqc'    !Update Process API
+#Include 'utils.sqc'     !Printing Utilities
+!**********************************************************************************
